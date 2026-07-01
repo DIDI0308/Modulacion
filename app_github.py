@@ -24,50 +24,56 @@ if file_clientes and file_entregas:
         df_clientes = pd.read_excel(file_clientes) if file_clientes.name.endswith('xlsx') else pd.read_csv(file_clientes)
         df_entregas = pd.read_excel(file_entregas) if file_entregas.name.endswith('xlsx') else pd.read_csv(file_entregas)
 
-        st.markdown("### Configuración de Parámetros de Cruce")
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            cols_clientes = df_clientes.columns.tolist()
-            # Intenta preseleccionar 'SPV' si existe
-            idx_clientes = cols_clientes.index('SPV') if 'SPV' in cols_clientes else 0
-            col_cruce_1 = st.selectbox("Columna clave en Base de Pedidos:", cols_clientes, index=idx_clientes)
-            
-        with col4:
-            cols_entregas = df_entregas.columns.tolist()
-            # Intenta detectar automáticamente la columna que contenga 'poc_exter'
-            posible_col_2 = next((c for c in cols_entregas if 'poc_exter' in str(c).lower()), cols_entregas[0])
-            idx_entregas = cols_entregas.index(posible_col_2) if posible_col_2 in cols_entregas else 0
-            col_cruce_2 = st.selectbox("Columna clave en Base de Despachos:", cols_entregas, index=idx_entregas)
+        # 1. Identificación automática de columnas de la Base 1 (Clientes)
+        cols_1 = df_clientes.columns.tolist()
+        # Busca la columna llamada 'PDV' o toma la segunda columna (Columna B / Índice 1)
+        col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
 
-        # Estandarización estricta de las columnas de unión para evitar fallas por formato de datos
+        # 2. Identificación automática de columnas de la Base 2 (Despachos)
+        cols_2 = df_entregas.columns.tolist()
+        # Busca 'poc_external_id', 'poc_exter' o toma la séptima columna (Columna G / Índice 6)
+        col_exter = next((c for c in cols_2 if 'poc_exter' in str(c).lower() or 'external' in str(c).lower()), cols_2[6] if len(cols_2) > 6 else cols_2[0])
+        # Busca 'driver_name', 'driver_na' o toma la cuarta columna (Columna D / Índice 3)
+        col_driver = next((c for c in cols_2 if 'driver' in str(c).lower() or 'chofer' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
+
+        st.markdown("### Parámetros de Cruce Confirmados")
+        col3, col4, col5 = st.columns(3)
+        with col3:
+            col_cruce_1 = st.selectbox("Columna Clave (Base 1):", cols_1, index=cols_1.index(col_pdv))
+        with col4:
+            col_cruce_2 = st.selectbox("Columna Clave (Base 2):", cols_2, index=cols_2.index(col_exter))
+        with col5:
+            col_driver_sel = st.selectbox("Columna de Conductor (Base 2):", cols_2, index=cols_2.index(col_driver))
+
+        # Estandarización de las llaves de cruce para evitar incompatibilidades de formato
         df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
         df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-        # Ejecución de la unión de datos (Left Join)
+        # 3. Ejecución del Cruce (Left Join basándose en los PDV de la Base 1)
         df_resultado = pd.merge(
-            df_clientes, 
+            df_clientes[[col_cruce_1]], 
             df_entregas, 
             left_on=col_cruce_1, 
             right_on=col_cruce_2, 
             how='left'
         )
+
+        # 4. Transformación de Texto: Separar por guión para generar la columna 'camion'
+        if col_driver_sel in df_resultado.columns:
+            # Reemplaza nulos temporales para evitar fallas en la división de cadenas
+            df_resultado[col_driver_sel] = df_resultado[col_driver_sel].fillna("Sin Datos - Sin Camion")
+            
+            # Divide la columna del conductor por el guión '-'
+            split_data = df_resultado[col_driver_sel].astype(str).str.split('-', expand=True)
+            
+            # Si el texto contiene un guión y se genera más de una columna, extrae la segunda parte
+            if split_data.shape[1] > 1:
+                df_resultado['camion'] = split_data[1].str.strip()
+            else:
+                df_resultado['camion'] = split_data[0].str.strip()
+
+        st.markdown("### Tabla de Modulaciones Generada")
         
-        st.markdown("### Datos Consolidados")
-        st.dataframe(df_resultado, use_container_width=True)
-        
-        # Opciones de descarga en formato Excel y CSV
-        st.markdown("### Exportar Resultados")
-        
-        # Generación de descarga en CSV
-        csv_data = df_resultado.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Descargar Reporte en CSV",
-            data=csv_data,
-            file_name="reporte_modulaciones.csv",
-            mime="text/csv"
-        )
-        
-    except Exception as e:
-        st.error(f"Se presentó un error en el procesamiento de las bases de datos: {e}")
-        st.info("Por favor, verifique que las columnas seleccionadas correspondan a los códigos de cliente en ambos archivos.")
+        # Filtrado selectivo de columnas para mostrar únicamente lo solicitado
+        columnas_vista = [col_cruce_1, col_driver_sel, 'camion']
+        cols_finales =

@@ -14,6 +14,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. Base de Clientes y Pedidos")
     file_clientes = st.file_uploader("Cargar archivo de Pedidos (Excel/CSV)", type=["xlsx", "csv"], key="clientes")
+
 with col2:
     st.subheader("2. Base de Despachos y Estados")
     file_entregas = st.file_uploader("Cargar archivo de Despachos (Excel/CSV)", type=["xlsx", "csv"], key="entregas")
@@ -26,14 +27,11 @@ if file_clientes and file_entregas:
 
         # 1. Identificación automática de columnas de la Base 1 (Clientes)
         cols_1 = df_clientes.columns.tolist()
-        # Busca la columna llamada 'PDV' o toma la segunda columna (Columna B / Índice 1)
         col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
 
         # 2. Identificación automática de columnas de la Base 2 (Despachos)
         cols_2 = df_entregas.columns.tolist()
-        # Busca 'poc_external_id', 'poc_exter' o toma la séptima columna (Columna G / Índice 6)
         col_exter = next((c for c in cols_2 if 'poc_exter' in str(c).lower() or 'external' in str(c).lower()), cols_2[6] if len(cols_2) > 6 else cols_2[0])
-        # Busca 'driver_name', 'driver_na' o toma la cuarta columna (Columna D / Índice 3)
         col_driver = next((c for c in cols_2 if 'driver' in str(c).lower() or 'chofer' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
 
         st.markdown("### Parámetros de Cruce Confirmados")
@@ -60,13 +58,9 @@ if file_clientes and file_entregas:
 
         # 4. Transformación de Texto: Separar por guión para generar la columna 'camion'
         if col_driver_sel in df_resultado.columns:
-            # Reemplaza nulos temporales para evitar fallas en la división de cadenas
             df_resultado[col_driver_sel] = df_resultado[col_driver_sel].fillna("Sin Datos - Sin Camion")
-            
-            # Divide la columna del conductor por el guión '-'
             split_data = df_resultado[col_driver_sel].astype(str).str.split('-', expand=True)
             
-            # Si el texto contiene un guión y se genera más de una columna, extrae la segunda parte
             if split_data.shape[1] > 1:
                 df_resultado['camion'] = split_data[1].str.strip()
             else:
@@ -74,6 +68,21 @@ if file_clientes and file_entregas:
 
         st.markdown("### Tabla de Modulaciones Generada")
         
-        # Filtrado selectivo de columnas para mostrar únicamente lo solicitado
+        # Filtrado de columnas asegurando una sola línea limpia de ejecución
         columnas_vista = [col_cruce_1, col_driver_sel, 'camion']
-        cols_finales =
+        cols_finales = [c for c in columnas_vista if c in df_resultado.columns]
+        
+        st.dataframe(df_resultado[cols_finales], use_container_width=True)
+
+        # 5. Exportación de los datos consolidados
+        st.markdown("### Exportar Resultados")
+        csv_data = df_resultado.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Descargar Reporte en CSV",
+            data=csv_data,
+            file_name="reporte_modulaciones_final.csv",
+            mime="text/csv"
+        )
+        
+    except Exception as e:
+        st.error(f"Se presentó un error en el procesamiento de las bases de datos: {e}")

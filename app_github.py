@@ -1,12 +1,20 @@
 import streamlit as st
 import pandas as pd
 
-# Configuración de la página con estética limpia y profesional
+# Configuración de la página
 st.set_page_config(page_title="Portal de Modulaciones - Taiyo", layout="wide")
 
 st.title("Portal de Modulaciones y Seguimiento de Entregas")
 st.markdown("Herramienta automatizada para el cruce de pedidos y monitoreo de estados de entrega.")
 st.markdown("---")
+
+# Función robusta para lectura de datos (Detecta automáticamente el separador)
+def cargar_datos(file):
+    if file.name.endswith('.xlsx'):
+        return pd.read_excel(file)
+    else:
+        # El uso de sep=None y engine='python' obliga al sistema a identificar si es coma o punto y coma
+        return pd.read_csv(file, sep=None, engine='python')
 
 # Secciones de carga de datos
 col1, col2 = st.columns(2)
@@ -21,9 +29,9 @@ with col2:
 
 if file_clientes and file_entregas:
     try:
-        # Lectura de los archivos cargados
-        df_clientes = pd.read_excel(file_clientes) if file_clientes.name.endswith('xlsx') else pd.read_csv(file_clientes)
-        df_entregas = pd.read_excel(file_entregas) if file_entregas.name.endswith('xlsx') else pd.read_csv(file_entregas)
+        # Carga de archivos con la función estandarizada
+        df_clientes = cargar_datos(file_clientes)
+        df_entregas = cargar_datos(file_entregas)
 
         # 1. Identificación automática por posición de columnas
         cols_1 = df_clientes.columns.tolist()

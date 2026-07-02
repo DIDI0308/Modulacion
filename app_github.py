@@ -81,7 +81,7 @@ if file_clientes and file_entregas:
         df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
         df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-        # Reducción de la base de despachos para evitar duplicidad, sumando las columnas de tiempo
+        # Reducción de la base de despachos para evitar duplicidad
         df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
 
         # Cruce
@@ -104,17 +104,20 @@ if file_clientes and file_entregas:
         else:
             df_resultado['Camion'] = "NO ENCONTRADO"
 
-        # Cálculo de Tiempos
+        # Cálculo de Tiempos y Extracción de Hora
         df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
         df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
         
+        # Extraer solo la hora en formato HH:MM:SS
+        df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
+
         # Diferencia en minutos
         df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
         df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2)
         df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].fillna("-")
 
         # Configuración de vista final
-        vista_final = df_resultado[[col_cruce_1, 'Camion', col_status_i, 'Tiempo_Entrega_Min', col_motivo_x]].rename(columns={
+        vista_final = df_resultado[[col_cruce_1, 'Camion', col_status_i, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]].rename(columns={
             col_cruce_1: 'PDV',
             col_status_i: 'Status',
             col_motivo_x: 'Motivo'

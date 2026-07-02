@@ -45,6 +45,12 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. Base de Clientes y Pedidos")
     file_clientes = st.file_uploader("Cargar archivo de Pedidos (Excel/CSV)", type=["xlsx", "csv"], key="clientes")
+    # Selector de tratamiento añadido a la interfaz
+    tratamiento_clientes = st.radio(
+        "Formato de la Base de Clientes:", 
+        ["Formato Tratado (Normal)", "Requiere Tratamiento (Separar comas y guiones)"], 
+        horizontal=True
+    )
 
 with col2:
     st.subheader("2. Base de Despachos y Estados")
@@ -55,9 +61,36 @@ if file_clientes and file_entregas:
         df_clientes = cargar_datos(file_clientes)
         df_entregas = cargar_datos(file_entregas)
 
+        # Lógica de Tratamiento Previo para la Base de Clientes
+        if tratamiento_clientes == "Requiere Tratamiento (Separar comas y guiones)":
+            # Si el Excel agrupó toda la fila en la Columna A (una sola columna detectada)
+            if len(df_clientes.columns) == 1:
+                col_name = df_clientes.columns[0]
+                header_parts = col_name.split(',')
+                df_clientes = df_clientes[col_name].astype(str).str.split(',', expand=True)
+                if len(header_parts) == df_clientes.shape[1]:
+                    df_clientes.columns = header_parts
+            
+            # Separar la primera columna por guiones
+            col_0 = df_clientes.columns[0]
+            split_guion = df_clientes[col_0].astype(str).str.split('-', expand=True)
+            
+            # Reestructurar para asegurar que PDV sea la Columna C (Índice 2)
+            df_tratado = pd.DataFrame()
+            df_tratado['COD'] = split_guion[0].str.strip() if split_guion.shape[1] > 0 else ""
+            df_tratado['NOM'] = split_guion[1].str.strip() if split_guion.shape[1] > 1 else ""
+            df_tratado['PDV'] = split_guion[2].str.strip() if split_guion.shape[1] > 2 else ""
+            
+            # Reasignar el resto de columnas originales
+            for c in df_clientes.columns[1:]:
+                df_tratado[c] = df_clientes[c]
+                
+            df_clientes = df_tratado
+
         # Identificación automática de columnas clave
         cols_1 = df_clientes.columns.tolist()
-        col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
+        # Modificado: Busca el PDV en la Columna C (Índice 2) si no se llama estrictamente 'PDV'
+        col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[2] if len(cols_1) > 2 else cols_1[0])
 
         cols_2 = df_entregas.columns.tolist()
         col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
@@ -65,7 +98,6 @@ if file_clientes and file_entregas:
         col_status_i = next((c for c in cols_2 if 'status' in str(c).lower()), cols_2[8] if len(cols_2) > 8 else cols_2[0])
         col_motivo_x = next((c for c in cols_2 if 'reason' in str(c).lower()), cols_2[23] if len(cols_2) > 23 else cols_2[-1])
         
-        # Identificación de columnas de tiempos
         col_arrived = next((c for c in cols_2 if 'arrived' in str(c).lower()), cols_2[20] if len(cols_2) > 20 else cols_2[-1])
         col_finished = next((c for c in cols_2 if 'finished' in str(c).lower()), cols_2[21] if len(cols_2) > 21 else cols_2[-1])
 
@@ -74,17 +106,15 @@ if file_clientes and file_entregas:
             with c1: col_cruce_1 = st.selectbox("Identificador (Base 1):", cols_1, index=cols_1.index(col_pdv))
             with c2: col_cruce_2 = st.selectbox("Buscar en (Base 2):", cols_2, index=cols_2.index(col_cruce_f))
             with c3: col_mostrar_d = st.selectbox("Conductor:", cols_2, index=cols_2.index(col_datos_d))
-            with c4: col_arrived_sel = st.selectbox("Llegada (arrived_at):", cols_2, index=cols_2.index(col_arrived))
-            with c5: col_finished_sel = st.selectbox("Salida (finished_at):", cols_2, index=cols_2.index(col_finished))
+            with c4: col_arrived_sel = st.selectbox("Llegada:", cols_2, index=cols_2.index(col_arrived))
+            with c5: col_finished_sel = st.selectbox("Salida:", cols_2, index=cols_2.index(col_finished))
 
         # Estandarización
         df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
         df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-        # Reducción de la base de despachos para evitar duplicidad
+        # Reducción y Cruce
         df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
-
-        # Cruce
         df_resultado = pd.merge(
             df_clientes[[col_cruce_1]], 
             df_entregas_subset, 
@@ -104,19 +134,14 @@ if file_clientes and file_entregas:
         else:
             df_resultado['Camion'] = "NO ENCONTRADO"
 
-        # Cálculo de Tiempos y Extracción de Hora
+        # Tiempos
         df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
         df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
-        
-        # Extraer solo la hora en formato HH:MM:SS
         df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
-
-        # Diferencia en minutos
         df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
-        df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2)
-        df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].fillna("-")
+        df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-        # Configuración de vista final
+        # Vista final
         vista_final = df_resultado[[col_cruce_1, 'Camion', col_status_i, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]].rename(columns={
             col_cruce_1: 'PDV',
             col_status_i: 'Status',
@@ -124,11 +149,8 @@ if file_clientes and file_entregas:
         })
         
         vista_final['Status'] = vista_final['Status'].fillna("SIN REGISTRO")
-        
-        # Lógica de Motivo
         condicion_motivo = vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
-        vista_final['Motivo'] = vista_final['Motivo'].where(condicion_motivo, "-")
-        vista_final['Motivo'] = vista_final['Motivo'].fillna("SIN DETALLE")
+        vista_final['Motivo'] = vista_final['Motivo'].where(condicion_motivo, "-").fillna("SIN DETALLE")
 
         st.markdown("### Controles de Búsqueda y Filtrado")
         

@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import re
 
-# Configuración de la página con estética ejecutiva
+# Configuración de la página con estética corporativa y minimalista
 st.set_page_config(page_title="Portal de Modulaciones", layout="wide")
 
 st.markdown("""
@@ -19,7 +18,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Portal de Modulaciones y Seguimiento de Entregas")
-st.markdown("Herramienta automatizada para el cruce de pedidos, tiempos, ventanas horarias y estados de entrega.")
+st.markdown("Herramienta automatizada para el cruce de pedidos, tiempos, ventanas horarias y métricas de venta.")
 st.markdown("---")
 
 def cargar_datos(file):
@@ -41,89 +40,105 @@ def color_status(val):
         return 'background-color: #2E7D32; color: white; font-weight: bold;'
     return ''
 
-# Función para estandarizar textos como "ANTES DE 7" a formato hora
 def estandarizar_ventana(texto):
     if pd.isna(texto):
         return "SIN ASIGNAR"
     
     t = str(texto).upper().strip()
     
-    # Tratamiento de "ANTES DE"
     if "ANTES DE" in t:
         num = ''.join(filter(str.isdigit, t))
-        if num:
-            return f"00:00 - {num.zfill(2)}:00"
+        if num: return f"00:00 - {num.zfill(2)}:00"
             
-    # Tratamiento de "DESPUES DE"
     if "DESPUÉS DE" in t or "DESPUES DE" in t:
         num = ''.join(filter(str.isdigit, t))
-        if num:
-            return f"{num.zfill(2)}:00 - 23:59"
+        if num: return f"{num.zfill(2)}:00 - 23:59"
             
-    # Tratamiento AM/PM básico y limpieza de espacios
     t = t.replace(' AM', '').replace(' PM', '').replace('AM', '').replace('PM', '')
     return t
 
-# Inicializar variable en caché para la base de ventanas
+# Inicialización de variables en caché para bases de Drive
 if 'df_ventanas' not in st.session_state:
     st.session_state['df_ventanas'] = None
+if 'df_ventas_ext' not in st.session_state:
+    st.session_state['df_ventas_ext'] = None
 
-# Creación de Pestañas (Tabs)
-tab_principal, tab_drive = st.tabs(["📊 Portal de Cruce", "☁️ Base Ventanas (Google Drive)"])
+# Creación de Pestañas con diseño ejecutivo
+tab_principal, tab_drive = st.tabs(["Portal de Cruce Principal", "Sincronización de Bases Externas (Drive)"])
 
 # ==========================================
-# PESTAÑA 2: GOOGLE DRIVE (Extracción Específica)
+# PESTAÑA 2: GOOGLE DRIVE (Ventanas y Ventas)
 # ==========================================
 with tab_drive:
-    st.subheader("Sincronización de Ventanas Horarias")
-    st.markdown("Haz clic para extraer PDV y Ventanas de 'VH FIJAS LPZ' (Col B y J) y 'VHs FIJAS EA' (Col A y F).")
+    st.subheader("Sincronización de Bases de Datos Externas")
+    st.markdown("Este proceso descargará y procesará las Ventanas Horarias y los Datos de Ventas directamente desde la nube.")
     
-    if st.button("🔄 Actualizar Base desde Drive", type="primary"):
-        with st.spinner("Leyendo documento, esto tomará unos segundos..."):
+    if st.button("Actualizar Bases desde Drive", type="primary"):
+        with st.spinner("Leyendo documentos corporativos, esto tomará unos segundos..."):
+            
+            # --- 1. PROCESAMIENTO DE VENTANAS HORARIAS ---
             try:
-                sheet_id = "1OYlT2SVGqxM-C6h27GSrBEcjBOyCixwP"
-                url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
-                xls = pd.ExcelFile(url)
-                
+                sheet_id_vh = "1OYlT2SVGqxM-C6h27GSrBEcjBOyCixwP"
+                url_vh = f"https://docs.google.com/spreadsheets/d/{sheet_id_vh}/export?format=xlsx"
+                xls_vh = pd.ExcelFile(url_vh)
                 df_vh_list = []
                 
-                # Extracción Hoja 1: VH FIJAS LPZ (PDV en B[1], Ventana en J[9])
-                if "VH FIJAS LPZ" in xls.sheet_names:
-                    df_lpz = pd.read_excel(xls, sheet_name="VH FIJAS LPZ")
+                if "VH FIJAS LPZ" in xls_vh.sheet_names:
+                    df_lpz = pd.read_excel(xls_vh, sheet_name="VH FIJAS LPZ")
                     if len(df_lpz.columns) >= 10:
                         df_temp = df_lpz.iloc[:, [1, 9]].copy()
                         df_temp.columns = ['PDV_Drive', 'Ventana_Tratada']
                         df_vh_list.append(df_temp)
                         
-                # Extracción Hoja 2: VHs FIJAS EA (PDV en A[0], Ventana en F[5])
-                if "VHs FIJAS EA" in xls.sheet_names:
-                    df_ea = pd.read_excel(xls, sheet_name="VHs FIJAS EA")
+                if "VHs FIJAS EA" in xls_vh.sheet_names:
+                    df_ea = pd.read_excel(xls_vh, sheet_name="VHs FIJAS EA")
                     if len(df_ea.columns) >= 6:
                         df_temp = df_ea.iloc[:, [0, 5]].copy()
                         df_temp.columns = ['PDV_Drive', 'Ventana_Tratada']
                         df_vh_list.append(df_temp)
                         
                 if df_vh_list:
-                    # Unir ambas hojas
-                    df_consolidado = pd.concat(df_vh_list, ignore_index=True)
-                    df_consolidado.dropna(subset=['PDV_Drive'], inplace=True)
-                    
-                    # Limpiar PDV de Drive
-                    df_consolidado['PDV_Drive'] = df_consolidado['PDV_Drive'].astype(str).str.strip().str.replace('.0', '', regex=False)
-                    
-                    # Aplicar Tratamiento de Texto (Antes de 7, Después de 16, etc.)
-                    df_consolidado['Ventana_Tratada'] = df_consolidado['Ventana_Tratada'].apply(estandarizar_ventana)
-                    
-                    # Guardar en memoria eliminando duplicados por si acaso
-                    df_consolidado = df_consolidado.drop_duplicates(subset=['PDV_Drive'], keep='first')
-                    st.session_state['df_ventanas'] = df_consolidado
-                    
-                    st.success("¡Base actualizada! Se extrajeron y limpiaron las ventanas de LPZ y EA.")
-                    st.dataframe(df_consolidado.head(10))
-                else:
-                    st.error("No se encontraron las hojas solicitadas o su estructura no coincide.")
+                    df_consolidado_vh = pd.concat(df_vh_list, ignore_index=True)
+                    df_consolidado_vh.dropna(subset=['PDV_Drive'], inplace=True)
+                    df_consolidado_vh['PDV_Drive'] = df_consolidado_vh['PDV_Drive'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                    df_consolidado_vh['Ventana_Tratada'] = df_consolidado_vh['Ventana_Tratada'].apply(estandarizar_ventana)
+                    df_consolidado_vh = df_consolidado_vh.drop_duplicates(subset=['PDV_Drive'], keep='first')
+                    st.session_state['df_ventanas'] = df_consolidado_vh
+                    st.success("Base de Ventanas Horarias (LPZ y EA) actualizada correctamente.")
             except Exception as e:
-                st.error(f"Error al conectar con Drive: {e}")
+                st.error(f"Error en sincronización de Ventanas: {e}")
+
+            # --- 2. PROCESAMIENTO DE CLIENTES Y VENTAS ---
+            try:
+                sheet_id_ventas = "1zIllojDvh23QUOP8afJbxD66I5Ly6tgY"
+                url_ventas = f"https://docs.google.com/spreadsheets/d/{sheet_id_ventas}/export?format=xlsx"
+                xls_ventas = pd.ExcelFile(url_ventas)
+                
+                # Leer hoja Clientes: PDV (Col B -> Índice 1), Territorio (Col I -> Índice 8)
+                df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
+                df_clientes_ext = df_clientes_ext.iloc[:, [1, 8]].copy()
+                df_clientes_ext.columns = ['PDV_Drive_Ventas', 'Territorio']
+                df_clientes_ext['PDV_Drive_Ventas'] = df_clientes_ext['PDV_Drive_Ventas'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                df_clientes_ext['Territorio'] = df_clientes_ext['Territorio'].astype(str).str.strip()
+                
+                # Leer hoja datos_ventas: Territorio (Col A -> Índice 0), Datos (Col B, C, D, E -> Índices 1, 2, 3, 4)
+                df_datos_ventas = pd.read_excel(xls_ventas, sheet_name="datos_ventas")
+                nombres_columnas_ventas = df_datos_ventas.columns
+                df_datos_ventas = df_datos_ventas.iloc[:, [0, 1, 2, 3, 4]].copy()
+                df_datos_ventas.columns = ['Territorio', nombres_columnas_ventas[1], nombres_columnas_ventas[2], nombres_columnas_ventas[3], nombres_columnas_ventas[4]]
+                df_datos_ventas['Territorio'] = df_datos_ventas['Territorio'].astype(str).str.strip()
+                
+                # Cruzar clientes con ventas usando Territorio
+                df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
+                df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
+                
+                # Guardar en memoria omitiendo la columna Territorio (ya que solo necesitamos B, C, D, E)
+                df_ventas_consolidadas = df_ventas_consolidadas.drop(columns=['Territorio'])
+                st.session_state['df_ventas_ext'] = df_ventas_consolidadas
+                
+                st.success("Base de Ventas (Cruces por Territorio) actualizada correctamente.")
+            except Exception as e:
+                st.error(f"Error en sincronización de Ventas: {e}")
 
 # ==========================================
 # PESTAÑA 1: FLUJO PRINCIPAL (Independiente)
@@ -149,9 +164,7 @@ with tab_principal:
             df_clientes = cargar_datos(file_clientes)
             df_entregas = cargar_datos(file_entregas)
 
-            # ---------------------------------------------------------
-            # Tratamiento de Base de Clientes (Pedidos)
-            # ---------------------------------------------------------
+            # --- Tratamiento Base Pedidos ---
             if tratamiento_clientes == "Requiere Tratamiento":
                 if len(df_clientes.columns) == 1:
                     col_name = df_clientes.columns[0]
@@ -178,9 +191,7 @@ with tab_principal:
                 cols_1 = df_clientes.columns.tolist()
                 col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
 
-            # ---------------------------------------------------------
-            # Identificación de Columnas (Despachos)
-            # ---------------------------------------------------------
+            # --- Identificación Columnas Despachos ---
             cols_2 = df_entregas.columns.tolist()
             col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
             col_datos_d = next((c for c in cols_2 if 'driver' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
@@ -198,13 +209,11 @@ with tab_principal:
                 with c4: col_arrived_sel = st.selectbox("Llegada:", cols_2, index=cols_2.index(col_arrived))
                 with c5: col_finished_sel = st.selectbox("Salida:", cols_2, index=cols_2.index(col_finished))
 
-            # Estandarización de cruce principal
+            # --- Estandarización Principal ---
             df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-            # ---------------------------------------------------------
-            # Procesamiento e Inserción de Ventanas (Independiente)
-            # ---------------------------------------------------------
+            # --- Cruce Pedidos y Despachos ---
             df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
             df_resultado = pd.merge(
                 df_clientes[[col_cruce_1]], 
@@ -214,26 +223,28 @@ with tab_principal:
                 how='left'
             )
 
-            # Lógica Condicional: Si hay ventanas de Drive se cruzan, sino, sigue su camino.
+            # --- Inserción de Ventanas de Drive ---
             if st.session_state['df_ventanas'] is not None:
                 df_vh = st.session_state['df_ventanas']
-                df_resultado = pd.merge(
-                    df_resultado,
-                    df_vh,
-                    left_on=col_cruce_1,
-                    right_on='PDV_Drive',
-                    how='left'
-                )
+                df_resultado = pd.merge(df_resultado, df_vh, left_on=col_cruce_1, right_on='PDV_Drive', how='left')
                 col_ventana_view = 'Ventana_Tratada'
                 df_resultado[col_ventana_view] = df_resultado[col_ventana_view].fillna("SIN ASIGNAR")
             else:
-                st.info("ℹ️ Mostrando tabla sin validación de Ventanas Horarias. (Sincroniza el Drive si las necesitas).")
                 df_resultado['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view = 'Ventana_Tratada'
 
-            # ---------------------------------------------------------
-            # Limpieza de Resultados
-            # ---------------------------------------------------------
+            # --- Inserción de Ventas de Drive ---
+            columnas_ventas_agregadas = []
+            if st.session_state['df_ventas_ext'] is not None:
+                df_ve = st.session_state['df_ventas_ext']
+                df_resultado = pd.merge(df_resultado, df_ve, left_on=col_cruce_1, right_on='PDV_Drive_Ventas', how='left')
+                
+                # Identificar las nuevas columnas agregadas (excluyendo el PDV_Drive)
+                columnas_ventas_agregadas = [c for c in df_ve.columns if c != 'PDV_Drive_Ventas']
+                for c in columnas_ventas_agregadas:
+                    df_resultado[c] = df_resultado[c].fillna("-")
+            
+            # --- Limpieza Final ---
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -250,8 +261,11 @@ with tab_principal:
             df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
             df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-            # Vista final
-            vista_final = df_resultado[[col_cruce_1, 'Camion', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]].rename(columns={
+            # Construcción dinámica de la vista final (Incluyendo columnas de ventas si existen)
+            columnas_base_vista = [col_cruce_1, 'Camion', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
+            columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
+            
+            vista_final = df_resultado[columnas_totales_vista].rename(columns={
                 col_cruce_1: 'PDV',
                 col_status_i: 'Status',
                 col_ventana_view: 'Ventana_Horaria',

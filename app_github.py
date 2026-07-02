@@ -64,19 +64,319 @@ if 'df_ventas_ext' not in st.session_state:
     st.session_state['df_ventas_ext'] = None
 
 # Creación de Pestañas con diseño ejecutivo
-tab_principal, tab_drive = st.tabs(["Portal de Cruce Principal", "Sincronización de Bases Externas (Drive)"])
+tab_general, tab_focus, tab_drive = st.tabs(["Modulaciones General", "Modulaciones Focus", "Sincronización Externa"])
 
 # ==========================================
-# PESTAÑA 2: GOOGLE DRIVE (Ventanas y Ventas)
+# PESTAÑA 1: MODULACIONES GENERAL
+# ==========================================
+with tab_general:
+    st.subheader("Base Despachos (Vista General)")
+    file_entregas_gen = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas_gen")
+
+    if file_entregas_gen:
+        try:
+            df_entregas_gen = cargar_datos(file_entregas_gen)
+
+            cols_2_gen = df_entregas_gen.columns.tolist()
+            col_cruce_f_gen = next((c for c in cols_2_gen if 'poc_exter' in str(c).lower()), cols_2_gen[5] if len(cols_2_gen) > 5 else cols_2_gen[0])
+            col_datos_d_gen = next((c for c in cols_2_gen if 'driver' in str(c).lower()), cols_2_gen[3] if len(cols_2_gen) > 3 else cols_2_gen[0])
+            col_status_i_gen = next((c for c in cols_2_gen if 'status' in str(c).lower()), cols_2_gen[8] if len(cols_2_gen) > 8 else cols_2_gen[0])
+            col_motivo_x_gen = next((c for c in cols_2_gen if 'reason' in str(c).lower()), cols_2_gen[23] if len(cols_2_gen) > 23 else cols_2_gen[-1])
+            col_arrived_gen = next((c for c in cols_2_gen if 'arrived' in str(c).lower()), cols_2_gen[20] if len(cols_2_gen) > 20 else cols_2_gen[-1])
+            col_finished_gen = next((c for c in cols_2_gen if 'finished' in str(c).lower()), cols_2_gen[21] if len(cols_2_gen) > 21 else cols_2_gen[-1])
+
+            with st.expander("Verificar Parámetros de Extracción (General)"):
+                c1_g, c2_g, c3_g, c4_g = st.columns(4)
+                with c1_g: col_cruce_2_gen_sel = st.selectbox("Identificador PDV:", cols_2_gen, index=cols_2_gen.index(col_cruce_f_gen), key="sel_pdv_gen")
+                with c2_g: col_mostrar_d_gen_sel = st.selectbox("Conductor:", cols_2_gen, index=cols_2_gen.index(col_datos_d_gen), key="sel_drv_gen")
+                with c3_g: col_arrived_sel_gen_sel = st.selectbox("Llegada:", cols_2_gen, index=cols_2_gen.index(col_arrived_gen), key="sel_arr_gen")
+                with c4_g: col_finished_sel_gen_sel = st.selectbox("Salida:", cols_2_gen, index=cols_2_gen.index(col_finished_gen), key="sel_fin_gen")
+
+            df_resultado_gen = df_entregas_gen.copy()
+            df_resultado_gen[col_cruce_2_gen_sel] = df_resultado_gen[col_cruce_2_gen_sel].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_resultado_gen = df_resultado_gen.drop_duplicates(subset=[col_cruce_2_gen_sel])
+
+            # Inserción de Ventanas de Drive
+            if st.session_state['df_ventanas'] is not None:
+                df_vh_gen = st.session_state['df_ventanas']
+                df_resultado_gen = pd.merge(df_resultado_gen, df_vh_gen, left_on=col_cruce_2_gen_sel, right_on='PDV_Drive', how='left')
+                col_ventana_view_gen = 'Ventana_Tratada'
+                df_resultado_gen[col_ventana_view_gen] = df_resultado_gen[col_ventana_view_gen].fillna("SIN ASIGNAR")
+            else:
+                df_resultado_gen['Ventana_Tratada'] = "NO CARGADA"
+                col_ventana_view_gen = 'Ventana_Tratada'
+
+            # Inserción de Ventas de Drive
+            columnas_ventas_agregadas_gen = []
+            if st.session_state['df_ventas_ext'] is not None:
+                df_ve_gen = st.session_state['df_ventas_ext']
+                df_resultado_gen = pd.merge(df_resultado_gen, df_ve_gen, left_on=col_cruce_2_gen_sel, right_on='PDV_Drive_Ventas', how='left')
+                
+                columnas_ventas_agregadas_gen = [c for c in df_ve_gen.columns if c != 'PDV_Drive_Ventas']
+                for c in columnas_ventas_agregadas_gen:
+                    df_resultado_gen[c] = df_resultado_gen[c].fillna("-")
+
+            # Limpieza Final General
+            if col_mostrar_d_gen_sel in df_resultado_gen.columns:
+                df_resultado_gen[col_mostrar_d_gen_sel] = df_resultado_gen[col_mostrar_d_gen_sel].fillna("SIN DATOS")
+                split_data_gen = df_resultado_gen[col_mostrar_d_gen_sel].astype(str).str.split('-', expand=True)
+                if split_data_gen.shape[1] > 1:
+                    df_resultado_gen['Camion'] = split_data_gen[1].str.strip().str.upper()
+                else:
+                    df_resultado_gen['Camion'] = split_data_gen[0].str.strip().str.upper()
+            else:
+                df_resultado_gen['Camion'] = "NO ENCONTRADO"
+
+            df_resultado_gen[col_arrived_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_arrived_sel_gen_sel], errors='coerce')
+            df_resultado_gen[col_finished_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_finished_sel_gen_sel], errors='coerce')
+            df_resultado_gen['Hora_Arribo'] = df_resultado_gen[col_arrived_sel_gen_sel].dt.strftime('%H:%M:%S').fillna("-")
+            df_resultado_gen['Tiempo_Entrega_Min'] = (df_resultado_gen[col_finished_sel_gen_sel] - df_resultado_gen[col_arrived_sel_gen_sel]).dt.total_seconds() / 60
+            df_resultado_gen['Tiempo_Entrega_Min'] = df_resultado_gen['Tiempo_Entrega_Min'].round(2).fillna("-")
+
+            columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
+            columnas_totales_vista_gen = columnas_base_vista_gen + columnas_ventas_agregadas_gen
+            
+            vista_final_gen = df_resultado_gen[columnas_totales_vista_gen].rename(columns={
+                col_cruce_2_gen_sel: 'PDV',
+                col_status_i_gen: 'Status',
+                col_ventana_view_gen: 'Ventana_Horaria',
+                col_motivo_x_gen: 'Motivo'
+            })
+            
+            vista_final_gen['Status'] = vista_final_gen['Status'].fillna("SIN REGISTRO")
+            condicion_motivo_gen = vista_final_gen['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
+            vista_final_gen['Motivo'] = vista_final_gen['Motivo'].where(condicion_motivo_gen, "-").fillna("SIN DETALLE")
+
+            st.markdown("### Controles de Búsqueda y Filtrado")
+            col_search_g, col_filter_g = st.columns([1, 2])
+            with col_search_g:
+                search_pdv_g = st.text_input("Buscar por Código PDV:", key="src_gen")
+            with col_filter_g:
+                status_filter_g = st.radio(
+                    "Segmentación de Estado:", 
+                    ["Todos", "CONCLUDED", "IN_TREATMENT / RESCHEDULED", "NOT_STARTED"], 
+                    horizontal=True,
+                    key="rad_gen"
+                )
+
+            if search_pdv_g:
+                vista_final_gen = vista_final_gen[vista_final_gen['PDV'].astype(str).str.contains(search_pdv_g, case=False, na=False)]
+                
+            if status_filter_g == "CONCLUDED":
+                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('CONCLUDED', na=False)]
+            elif status_filter_g == "IN_TREATMENT / RESCHEDULED":
+                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)]
+            elif status_filter_g == "NOT_STARTED":
+                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('NOT_STARTED', na=False)]
+
+            st.markdown("### Consolidado General")
+            if hasattr(vista_final_gen.style, 'map'):
+                styled_df_gen = vista_final_gen.style.map(color_status, subset=['Status'])
+            else:
+                styled_df_gen = vista_final_gen.style.applymap(color_status, subset=['Status'])
+                
+            st.dataframe(styled_df_gen, use_container_width=True)
+            st.markdown("---")
+            
+            csv_data_gen = vista_final_gen.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Descargar Reporte General",
+                data=csv_data_gen,
+                file_name="reporte_modulaciones_general.csv",
+                mime="text/csv",
+                type="primary",
+                key="btn_dl_gen"
+            )
+
+        except Exception as e:
+            st.error(f"Se presentó un error en el procesamiento general: {e}")
+
+# ==========================================
+# PESTAÑA 2: MODULACIONES FOCUS
+# ==========================================
+with tab_focus:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("1. Base Pedidos")
+        file_clientes = st.file_uploader("Cargar archivo de Pedidos", type=["xlsx", "csv"], key="clientes_foc")
+        tratamiento_clientes = st.radio(
+            "Formato de Base Pedidos:", 
+            ["Normal", "Requiere Tratamiento"], 
+            horizontal=True,
+            key="rad_trt_foc"
+        )
+
+    with col2:
+        st.subheader("2. Base Despachos")
+        file_entregas = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas_foc")
+
+    if file_clientes and file_entregas:
+        try:
+            df_clientes = cargar_datos(file_clientes)
+            df_entregas = cargar_datos(file_entregas)
+
+            # Tratamiento Base Pedidos
+            if tratamiento_clientes == "Requiere Tratamiento":
+                if len(df_clientes.columns) == 1:
+                    col_name = df_clientes.columns[0]
+                    header_parts = col_name.split(',')
+                    df_clientes = df_clientes[col_name].astype(str).str.split(',', expand=True)
+                    if len(header_parts) == df_clientes.shape[1]:
+                        df_clientes.columns = header_parts
+                
+                col_0 = df_clientes.columns[0]
+                split_guion = df_clientes[col_0].astype(str).str.split('-', expand=True)
+                
+                df_tratado = pd.DataFrame()
+                df_tratado['COD'] = split_guion[0].str.strip() if split_guion.shape[1] > 0 else ""
+                df_tratado['NOM'] = split_guion[1].str.strip() if split_guion.shape[1] > 1 else ""
+                df_tratado['PDV'] = split_guion[2].str.strip() if split_guion.shape[1] > 2 else ""
+                
+                for c in df_clientes.columns[1:]:
+                    df_tratado[c] = df_clientes[c]
+                    
+                df_clientes = df_tratado
+                cols_1 = df_clientes.columns.tolist()
+                col_pdv = 'PDV' 
+            else:
+                cols_1 = df_clientes.columns.tolist()
+                col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
+
+            # Identificación Columnas Despachos
+            cols_2 = df_entregas.columns.tolist()
+            col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
+            col_datos_d = next((c for c in cols_2 if 'driver' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
+            col_status_i = next((c for c in cols_2 if 'status' in str(c).lower()), cols_2[8] if len(cols_2) > 8 else cols_2[0])
+            col_motivo_x = next((c for c in cols_2 if 'reason' in str(c).lower()), cols_2[23] if len(cols_2) > 23 else cols_2[-1])
+            col_arrived = next((c for c in cols_2 if 'arrived' in str(c).lower()), cols_2[20] if len(cols_2) > 20 else cols_2[-1])
+            col_finished = next((c for c in cols_2 if 'finished' in str(c).lower()), cols_2[21] if len(cols_2) > 21 else cols_2[-1])
+
+            with st.expander("Verificar Parámetros de Cruce (Focus)"):
+                st.markdown("**Bases 1 y 2 (Pedidos y Despachos)**")
+                c1_f, c2_f, c3_f, c4_f, c5_f = st.columns(5)
+                with c1_f: col_cruce_1 = st.selectbox("Identificador (Base 1):", cols_1, index=cols_1.index(col_pdv), key="sel_foc_1")
+                with c2_f: col_cruce_2 = st.selectbox("Buscar en (Base 2):", cols_2, index=cols_2.index(col_cruce_f), key="sel_foc_2")
+                with c3_f: col_mostrar_d = st.selectbox("Conductor:", cols_2, index=cols_2.index(col_datos_d), key="sel_foc_3")
+                with c4_f: col_arrived_sel = st.selectbox("Llegada:", cols_2, index=cols_2.index(col_arrived), key="sel_foc_4")
+                with c5_f: col_finished_sel = st.selectbox("Salida:", cols_2, index=cols_2.index(col_finished), key="sel_foc_5")
+
+            df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
+
+            # Cruce Pedidos y Despachos
+            df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
+            df_resultado = pd.merge(
+                df_clientes[[col_cruce_1]], 
+                df_entregas_subset, 
+                left_on=col_cruce_1, 
+                right_on=col_cruce_2, 
+                how='left'
+            )
+
+            # Inserción de Ventanas
+            if st.session_state['df_ventanas'] is not None:
+                df_vh = st.session_state['df_ventanas']
+                df_resultado = pd.merge(df_resultado, df_vh, left_on=col_cruce_1, right_on='PDV_Drive', how='left')
+                col_ventana_view = 'Ventana_Tratada'
+                df_resultado[col_ventana_view] = df_resultado[col_ventana_view].fillna("SIN ASIGNAR")
+            else:
+                df_resultado['Ventana_Tratada'] = "NO CARGADA"
+                col_ventana_view = 'Ventana_Tratada'
+
+            # Inserción de Ventas
+            columnas_ventas_agregadas = []
+            if st.session_state['df_ventas_ext'] is not None:
+                df_ve = st.session_state['df_ventas_ext']
+                df_resultado = pd.merge(df_resultado, df_ve, left_on=col_cruce_1, right_on='PDV_Drive_Ventas', how='left')
+                columnas_ventas_agregadas = [c for c in df_ve.columns if c != 'PDV_Drive_Ventas']
+                for c in columnas_ventas_agregadas:
+                    df_resultado[c] = df_resultado[c].fillna("-")
+            
+            # Limpieza Final
+            if col_mostrar_d in df_resultado.columns:
+                df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
+                split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
+                if split_data.shape[1] > 1:
+                    df_resultado['Camion'] = split_data[1].str.strip().str.upper()
+                else:
+                    df_resultado['Camion'] = split_data[0].str.strip().str.upper()
+            else:
+                df_resultado['Camion'] = "NO ENCONTRADO"
+
+            df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
+            df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
+            df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
+            df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
+            df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
+
+            columnas_base_vista = [col_cruce_1, 'Camion', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
+            columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
+            
+            vista_final = df_resultado[columnas_totales_vista].rename(columns={
+                col_cruce_1: 'PDV',
+                col_status_i: 'Status',
+                col_ventana_view: 'Ventana_Horaria',
+                col_motivo_x: 'Motivo'
+            })
+            
+            vista_final['Status'] = vista_final['Status'].fillna("SIN REGISTRO")
+            condicion_motivo = vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
+            vista_final['Motivo'] = vista_final['Motivo'].where(condicion_motivo, "-").fillna("SIN DETALLE")
+
+            st.markdown("### Controles de Búsqueda y Filtrado")
+            col_search_f, col_filter_f = st.columns([1, 2])
+            with col_search_f:
+                search_pdv = st.text_input("Buscar por Código PDV:", key="src_foc")
+            with col_filter_f:
+                status_filter = st.radio(
+                    "Segmentación de Estado:", 
+                    ["Todos", "CONCLUDED", "IN_TREATMENT / RESCHEDULED", "NOT_STARTED"], 
+                    horizontal=True,
+                    key="rad_foc"
+                )
+
+            if search_pdv:
+                vista_final = vista_final[vista_final['PDV'].astype(str).str.contains(search_pdv, case=False, na=False)]
+                
+            if status_filter == "CONCLUDED":
+                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('CONCLUDED', na=False)]
+            elif status_filter == "IN_TREATMENT / RESCHEDULED":
+                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)]
+            elif status_filter == "NOT_STARTED":
+                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('NOT_STARTED', na=False)]
+
+            st.markdown("### Consolidado Focus")
+            if hasattr(vista_final.style, 'map'):
+                styled_df = vista_final.style.map(color_status, subset=['Status'])
+            else:
+                styled_df = vista_final.style.applymap(color_status, subset=['Status'])
+                
+            st.dataframe(styled_df, use_container_width=True)
+            st.markdown("---")
+            
+            csv_data = vista_final.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Descargar Reporte Focus",
+                data=csv_data,
+                file_name="reporte_modulaciones_focus.csv",
+                mime="text/csv",
+                type="primary",
+                key="btn_dl_foc"
+            )
+
+        except Exception as e:
+            st.error(f"Se presentó un error en el procesamiento focus: {e}")
+
+# ==========================================
+# PESTAÑA 3: SINCRONIZACIÓN EXTERNA (DRIVE)
 # ==========================================
 with tab_drive:
     st.subheader("Sincronización de Bases de Datos Externas")
     st.markdown("Este proceso descargará y procesará las Ventanas Horarias y los Datos de Ventas directamente desde la nube.")
     
-    if st.button("Actualizar Bases desde Drive", type="primary"):
+    if st.button("Actualizar Bases desde Drive", type="primary", key="btn_sync_drive"):
         with st.spinner("Leyendo documentos corporativos, esto tomará unos segundos..."):
-            
-            # --- 1. PROCESAMIENTO DE VENTANAS HORARIAS ---
             try:
                 sheet_id_vh = "1OYlT2SVGqxM-C6h27GSrBEcjBOyCixwP"
                 url_vh = f"https://docs.google.com/spreadsheets/d/{sheet_id_vh}/export?format=xlsx"
@@ -104,219 +404,32 @@ with tab_drive:
                     df_consolidado_vh['Ventana_Tratada'] = df_consolidado_vh['Ventana_Tratada'].apply(estandarizar_ventana)
                     df_consolidado_vh = df_consolidado_vh.drop_duplicates(subset=['PDV_Drive'], keep='first')
                     st.session_state['df_ventanas'] = df_consolidado_vh
-                    st.success("Base de Ventanas Horarias (LPZ y EA) actualizada correctamente.")
+                    st.success("Base de Ventanas Horarias actualizada correctamente.")
             except Exception as e:
                 st.error(f"Error en sincronización de Ventanas: {e}")
 
-            # --- 2. PROCESAMIENTO DE CLIENTES Y VENTAS ---
             try:
                 sheet_id_ventas = "1zIllojDvh23QUOP8afJbxD66I5Ly6tgY"
                 url_ventas = f"https://docs.google.com/spreadsheets/d/{sheet_id_ventas}/export?format=xlsx"
                 xls_ventas = pd.ExcelFile(url_ventas)
                 
-                # Leer hoja Clientes: PDV (Col B -> Índice 1), Territorio (Col I -> Índice 8)
                 df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
                 df_clientes_ext = df_clientes_ext.iloc[:, [1, 8]].copy()
                 df_clientes_ext.columns = ['PDV_Drive_Ventas', 'Territorio']
                 df_clientes_ext['PDV_Drive_Ventas'] = df_clientes_ext['PDV_Drive_Ventas'].astype(str).str.strip().str.replace('.0', '', regex=False)
                 df_clientes_ext['Territorio'] = df_clientes_ext['Territorio'].astype(str).str.strip()
                 
-                # Leer hoja datos_ventas: Territorio (Col A -> Índice 0), Datos (Col B, C, D, E -> Índices 1, 2, 3, 4)
                 df_datos_ventas = pd.read_excel(xls_ventas, sheet_name="datos_ventas")
                 nombres_columnas_ventas = df_datos_ventas.columns
                 df_datos_ventas = df_datos_ventas.iloc[:, [0, 1, 2, 3, 4]].copy()
                 df_datos_ventas.columns = ['Territorio', nombres_columnas_ventas[1], nombres_columnas_ventas[2], nombres_columnas_ventas[3], nombres_columnas_ventas[4]]
                 df_datos_ventas['Territorio'] = df_datos_ventas['Territorio'].astype(str).str.strip()
                 
-                # Cruzar clientes con ventas usando Territorio
                 df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
                 df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
-                
-                # Guardar en memoria omitiendo la columna Territorio (ya que solo necesitamos B, C, D, E)
                 df_ventas_consolidadas = df_ventas_consolidadas.drop(columns=['Territorio'])
                 st.session_state['df_ventas_ext'] = df_ventas_consolidadas
                 
                 st.success("Base de Ventas (Cruces por Territorio) actualizada correctamente.")
             except Exception as e:
                 st.error(f"Error en sincronización de Ventas: {e}")
-
-# ==========================================
-# PESTAÑA 1: FLUJO PRINCIPAL (Independiente)
-# ==========================================
-with tab_principal:
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("1. Base Pedidos")
-        file_clientes = st.file_uploader("Cargar archivo de Pedidos", type=["xlsx", "csv"], key="clientes")
-        tratamiento_clientes = st.radio(
-            "Formato de Base Pedidos:", 
-            ["Normal", "Requiere Tratamiento"], 
-            horizontal=True
-        )
-
-    with col2:
-        st.subheader("2. Base Despachos")
-        file_entregas = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas")
-
-    if file_clientes and file_entregas:
-        try:
-            df_clientes = cargar_datos(file_clientes)
-            df_entregas = cargar_datos(file_entregas)
-
-            # --- Tratamiento Base Pedidos ---
-            if tratamiento_clientes == "Requiere Tratamiento":
-                if len(df_clientes.columns) == 1:
-                    col_name = df_clientes.columns[0]
-                    header_parts = col_name.split(',')
-                    df_clientes = df_clientes[col_name].astype(str).str.split(',', expand=True)
-                    if len(header_parts) == df_clientes.shape[1]:
-                        df_clientes.columns = header_parts
-                
-                col_0 = df_clientes.columns[0]
-                split_guion = df_clientes[col_0].astype(str).str.split('-', expand=True)
-                
-                df_tratado = pd.DataFrame()
-                df_tratado['COD'] = split_guion[0].str.strip() if split_guion.shape[1] > 0 else ""
-                df_tratado['NOM'] = split_guion[1].str.strip() if split_guion.shape[1] > 1 else ""
-                df_tratado['PDV'] = split_guion[2].str.strip() if split_guion.shape[1] > 2 else ""
-                
-                for c in df_clientes.columns[1:]:
-                    df_tratado[c] = df_clientes[c]
-                    
-                df_clientes = df_tratado
-                cols_1 = df_clientes.columns.tolist()
-                col_pdv = 'PDV' 
-            else:
-                cols_1 = df_clientes.columns.tolist()
-                col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
-
-            # --- Identificación Columnas Despachos ---
-            cols_2 = df_entregas.columns.tolist()
-            col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
-            col_datos_d = next((c for c in cols_2 if 'driver' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
-            col_status_i = next((c for c in cols_2 if 'status' in str(c).lower()), cols_2[8] if len(cols_2) > 8 else cols_2[0])
-            col_motivo_x = next((c for c in cols_2 if 'reason' in str(c).lower()), cols_2[23] if len(cols_2) > 23 else cols_2[-1])
-            col_arrived = next((c for c in cols_2 if 'arrived' in str(c).lower()), cols_2[20] if len(cols_2) > 20 else cols_2[-1])
-            col_finished = next((c for c in cols_2 if 'finished' in str(c).lower()), cols_2[21] if len(cols_2) > 21 else cols_2[-1])
-
-            with st.expander("Verificar Parámetros de Cruce"):
-                st.markdown("**Bases 1 y 2 (Pedidos y Despachos)**")
-                c1, c2, c3, c4, c5 = st.columns(5)
-                with c1: col_cruce_1 = st.selectbox("Identificador (Base 1):", cols_1, index=cols_1.index(col_pdv))
-                with c2: col_cruce_2 = st.selectbox("Buscar en (Base 2):", cols_2, index=cols_2.index(col_cruce_f))
-                with c3: col_mostrar_d = st.selectbox("Conductor:", cols_2, index=cols_2.index(col_datos_d))
-                with c4: col_arrived_sel = st.selectbox("Llegada:", cols_2, index=cols_2.index(col_arrived))
-                with c5: col_finished_sel = st.selectbox("Salida:", cols_2, index=cols_2.index(col_finished))
-
-            # --- Estandarización Principal ---
-            df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
-            df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
-
-            # --- Cruce Pedidos y Despachos ---
-            df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
-            df_resultado = pd.merge(
-                df_clientes[[col_cruce_1]], 
-                df_entregas_subset, 
-                left_on=col_cruce_1, 
-                right_on=col_cruce_2, 
-                how='left'
-            )
-
-            # --- Inserción de Ventanas de Drive ---
-            if st.session_state['df_ventanas'] is not None:
-                df_vh = st.session_state['df_ventanas']
-                df_resultado = pd.merge(df_resultado, df_vh, left_on=col_cruce_1, right_on='PDV_Drive', how='left')
-                col_ventana_view = 'Ventana_Tratada'
-                df_resultado[col_ventana_view] = df_resultado[col_ventana_view].fillna("SIN ASIGNAR")
-            else:
-                df_resultado['Ventana_Tratada'] = "NO CARGADA"
-                col_ventana_view = 'Ventana_Tratada'
-
-            # --- Inserción de Ventas de Drive ---
-            columnas_ventas_agregadas = []
-            if st.session_state['df_ventas_ext'] is not None:
-                df_ve = st.session_state['df_ventas_ext']
-                df_resultado = pd.merge(df_resultado, df_ve, left_on=col_cruce_1, right_on='PDV_Drive_Ventas', how='left')
-                
-                # Identificar las nuevas columnas agregadas (excluyendo el PDV_Drive)
-                columnas_ventas_agregadas = [c for c in df_ve.columns if c != 'PDV_Drive_Ventas']
-                for c in columnas_ventas_agregadas:
-                    df_resultado[c] = df_resultado[c].fillna("-")
-            
-            # --- Limpieza Final ---
-            if col_mostrar_d in df_resultado.columns:
-                df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
-                split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
-                if split_data.shape[1] > 1:
-                    df_resultado['Camion'] = split_data[1].str.strip().str.upper()
-                else:
-                    df_resultado['Camion'] = split_data[0].str.strip().str.upper()
-            else:
-                df_resultado['Camion'] = "NO ENCONTRADO"
-
-            df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
-            df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
-            df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
-            df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
-            df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
-
-            # Construcción dinámica de la vista final (Incluyendo columnas de ventas si existen)
-            columnas_base_vista = [col_cruce_1, 'Camion', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
-            columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
-            
-            vista_final = df_resultado[columnas_totales_vista].rename(columns={
-                col_cruce_1: 'PDV',
-                col_status_i: 'Status',
-                col_ventana_view: 'Ventana_Horaria',
-                col_motivo_x: 'Motivo'
-            })
-            
-            vista_final['Status'] = vista_final['Status'].fillna("SIN REGISTRO")
-            condicion_motivo = vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
-            vista_final['Motivo'] = vista_final['Motivo'].where(condicion_motivo, "-").fillna("SIN DETALLE")
-
-            st.markdown("### Controles de Búsqueda y Filtrado")
-            
-            col_search, col_filter = st.columns([1, 2])
-            with col_search:
-                search_pdv = st.text_input("Buscar por Código PDV:")
-            with col_filter:
-                status_filter = st.radio(
-                    "Segmentación de Estado:", 
-                    ["Todos", "CONCLUDED", "IN_TREATMENT / RESCHEDULED", "NOT_STARTED"], 
-                    horizontal=True
-                )
-
-            if search_pdv:
-                vista_final = vista_final[vista_final['PDV'].astype(str).str.contains(search_pdv, case=False, na=False)]
-                
-            if status_filter == "CONCLUDED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('CONCLUDED', na=False)]
-            elif status_filter == "IN_TREATMENT / RESCHEDULED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)]
-            elif status_filter == "NOT_STARTED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('NOT_STARTED', na=False)]
-
-            st.markdown("### Consolidado de Modulaciones")
-            
-            if hasattr(vista_final.style, 'map'):
-                styled_df = vista_final.style.map(color_status, subset=['Status'])
-            else:
-                styled_df = vista_final.style.applymap(color_status, subset=['Status'])
-                
-            st.dataframe(styled_df, use_container_width=True)
-
-            st.markdown("---")
-            
-            csv_data = vista_final.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Descargar Reporte Actual",
-                data=csv_data,
-                file_name="reporte_modulaciones_filtrado.csv",
-                mime="text/csv",
-                type="primary"
-            )
-
-        except Exception as e:
-            st.error(f"Se presentó un error en el procesamiento: {e}")

@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 
-# Configuración de la página con estética ejecutiva y minimalista
+# Configuración de la página con estética ejecutiva
 st.set_page_config(page_title="Portal de Modulaciones", layout="wide")
 
-# Inyección de CSS para estilizar los selectores
 st.markdown("""
     <style>
     div.row-widget.stRadio > div {
@@ -45,7 +44,6 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. Base de Clientes y Pedidos")
     file_clientes = st.file_uploader("Cargar archivo de Pedidos (Excel/CSV)", type=["xlsx", "csv"], key="clientes")
-    # Selector de tratamiento añadido a la interfaz
     tratamiento_clientes = st.radio(
         "Formato de la Base de Clientes:", 
         ["Formato Tratado (Normal)", "Requiere Tratamiento (Separar comas y guiones)"], 
@@ -63,7 +61,6 @@ if file_clientes and file_entregas:
 
         # Lógica de Tratamiento Previo para la Base de Clientes
         if tratamiento_clientes == "Requiere Tratamiento (Separar comas y guiones)":
-            # Si el Excel agrupó toda la fila en la Columna A (una sola columna detectada)
             if len(df_clientes.columns) == 1:
                 col_name = df_clientes.columns[0]
                 header_parts = col_name.split(',')
@@ -71,26 +68,24 @@ if file_clientes and file_entregas:
                 if len(header_parts) == df_clientes.shape[1]:
                     df_clientes.columns = header_parts
             
-            # Separar la primera columna por guiones
             col_0 = df_clientes.columns[0]
             split_guion = df_clientes[col_0].astype(str).str.split('-', expand=True)
             
-            # Reestructurar para asegurar que PDV sea la Columna C (Índice 2)
             df_tratado = pd.DataFrame()
             df_tratado['COD'] = split_guion[0].str.strip() if split_guion.shape[1] > 0 else ""
             df_tratado['NOM'] = split_guion[1].str.strip() if split_guion.shape[1] > 1 else ""
             df_tratado['PDV'] = split_guion[2].str.strip() if split_guion.shape[1] > 2 else ""
             
-            # Reasignar el resto de columnas originales
             for c in df_clientes.columns[1:]:
                 df_tratado[c] = df_clientes[c]
                 
             df_clientes = df_tratado
-
-        # Identificación automática de columnas clave
-        cols_1 = df_clientes.columns.tolist()
-        # Modificado: Busca el PDV en la Columna C (Índice 2) si no se llama estrictamente 'PDV'
-        col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[2] if len(cols_1) > 2 else cols_1[0])
+            cols_1 = df_clientes.columns.tolist()
+            col_pdv = 'PDV' # Fijado porque lo acabamos de crear en el tratamiento
+        else:
+            cols_1 = df_clientes.columns.tolist()
+            # Flujo original intacto: Busca PDV o toma la Columna B (Índice 1)
+            col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
 
         cols_2 = df_entregas.columns.tolist()
         col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
@@ -195,4 +190,4 @@ if file_clientes and file_entregas:
         )
         
     except Exception as e:
-        st.error(f"Se presentó un error en el procesamiento de las bases de datos: {e}")
+        st.error(f"Se presentó un error en el procesamiento: {e}")

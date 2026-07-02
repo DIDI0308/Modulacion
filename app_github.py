@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 
-# Configuración de la página con estética corporativa y minimalista
+# Configuración de la página con estética corporativa y de lectura limpia
 st.set_page_config(page_title="Portal de Modulaciones", layout="wide")
 
 st.markdown("""
@@ -63,21 +63,22 @@ if 'df_ventanas' not in st.session_state:
 if 'df_ventas_ext' not in st.session_state:
     st.session_state['df_ventas_ext'] = None
 
-# Creación de Pestañas con diseño ejecutivo
+# Estructura de pestañas ejecutivas
 tab_general, tab_focus, tab_drive = st.tabs(["Modulaciones General", "Modulaciones Focus", "Sincronización Externa"])
 
 # ==========================================
-# PESTAÑA 1: MODULACIONES GENERAL
+# PESTAÑA 1: MODULACIONES GENERAL (Base Despachos Completa)
 # ==========================================
 with tab_general:
     st.subheader("Base Despachos (Vista General)")
-    file_entregas_gen = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas_gen")
+    file_entregas_gen = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas_general")
 
     if file_entregas_gen:
         try:
-            df_entregas_gen = cargar_datos(file_entregas_gen)
-
-            cols_2_gen = df_entregas_gen.columns.tolist()
+            df_resultado_gen = cargar_datos(file_entregas_gen)
+            cols_2_gen = df_resultado_gen.columns.tolist()
+            
+            # Identificación automática de columnas de despacho
             col_cruce_f_gen = next((c for c in cols_2_gen if 'poc_exter' in str(c).lower()), cols_2_gen[5] if len(cols_2_gen) > 5 else cols_2_gen[0])
             col_datos_d_gen = next((c for c in cols_2_gen if 'driver' in str(c).lower()), cols_2_gen[3] if len(cols_2_gen) > 3 else cols_2_gen[0])
             col_status_i_gen = next((c for c in cols_2_gen if 'status' in str(c).lower()), cols_2_gen[8] if len(cols_2_gen) > 8 else cols_2_gen[0])
@@ -92,11 +93,10 @@ with tab_general:
                 with c3_g: col_arrived_sel_gen_sel = st.selectbox("Llegada:", cols_2_gen, index=cols_2_gen.index(col_arrived_gen), key="sel_arr_gen")
                 with c4_g: col_finished_sel_gen_sel = st.selectbox("Salida:", cols_2_gen, index=cols_2_gen.index(col_finished_gen), key="sel_fin_gen")
 
-            df_resultado_gen = df_entregas_gen.copy()
+            # Estandarizar la llave de cruce en la base general sin eliminar filas duplicadas de la operación
             df_resultado_gen[col_cruce_2_gen_sel] = df_resultado_gen[col_cruce_2_gen_sel].astype(str).str.strip().str.replace('.0', '', regex=False)
-            df_resultado_gen = df_resultado_gen.drop_duplicates(subset=[col_cruce_2_gen_sel])
 
-            # Inserción de Ventanas de Drive
+            # Sincronizar Ventanas de Drive si están disponibles
             if st.session_state['df_ventanas'] is not None:
                 df_vh_gen = st.session_state['df_ventanas']
                 df_resultado_gen = pd.merge(df_resultado_gen, df_vh_gen, left_on=col_cruce_2_gen_sel, right_on='PDV_Drive', how='left')
@@ -106,17 +106,16 @@ with tab_general:
                 df_resultado_gen['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view_gen = 'Ventana_Tratada'
 
-            # Inserción de Ventas de Drive
+            # Sincronizar Ventas de Drive si están disponibles
             columnas_ventas_agregadas_gen = []
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve_gen = st.session_state['df_ventas_ext']
                 df_resultado_gen = pd.merge(df_resultado_gen, df_ve_gen, left_on=col_cruce_2_gen_sel, right_on='PDV_Drive_Ventas', how='left')
-                
                 columnas_ventas_agregadas_gen = [c for c in df_ve_gen.columns if c != 'PDV_Drive_Ventas']
                 for c in columnas_ventas_agregadas_gen:
                     df_resultado_gen[c] = df_resultado_gen[c].fillna("-")
 
-            # Limpieza Final General
+            # Separación de Camión
             if col_mostrar_d_gen_sel in df_resultado_gen.columns:
                 df_resultado_gen[col_mostrar_d_gen_sel] = df_resultado_gen[col_mostrar_d_gen_sel].fillna("SIN DATOS")
                 split_data_gen = df_resultado_gen[col_mostrar_d_gen_sel].astype(str).str.split('-', expand=True)
@@ -127,12 +126,14 @@ with tab_general:
             else:
                 df_resultado_gen['Camion'] = "NO ENCONTRADO"
 
+            # Conversión y procesamiento de tiempos de arribo
             df_resultado_gen[col_arrived_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_arrived_sel_gen_sel], errors='coerce')
             df_resultado_gen[col_finished_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_finished_sel_gen_sel], errors='coerce')
             df_resultado_gen['Hora_Arribo'] = df_resultado_gen[col_arrived_sel_gen_sel].dt.strftime('%H:%M:%S').fillna("-")
             df_resultado_gen['Tiempo_Entrega_Min'] = (df_resultado_gen[col_finished_sel_gen_sel] - df_resultado_gen[col_arrived_sel_gen_sel]).dt.total_seconds() / 60
             df_resultado_gen['Tiempo_Entrega_Min'] = df_resultado_gen['Tiempo_Entrega_Min'].round(2).fillna("-")
 
+            # Estructuración de la vista final
             columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
             columnas_totales_vista_gen = columnas_base_vista_gen + columnas_ventas_agregadas_gen
             
@@ -192,31 +193,30 @@ with tab_general:
             st.error(f"Se presentó un error en el procesamiento general: {e}")
 
 # ==========================================
-# PESTAÑA 2: MODULACIONES FOCUS
+# PESTAÑA 2: MODULACIONES FOCUS (Cruce de Pedidos Existente)
 # ==========================================
 with tab_focus:
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("1. Base Pedidos")
-        file_clientes = st.file_uploader("Cargar archivo de Pedidos", type=["xlsx", "csv"], key="clientes_foc")
+        file_clientes = st.file_uploader("Cargar archivo de Pedidos (Excel/CSV)", type=["xlsx", "csv"], key="clientes")
         tratamiento_clientes = st.radio(
             "Formato de Base Pedidos:", 
             ["Normal", "Requiere Tratamiento"], 
             horizontal=True,
-            key="rad_trt_foc"
+            key="tratamiento_pedidos_focus"
         )
 
     with col2:
         st.subheader("2. Base Despachos")
-        file_entregas = st.file_uploader("Cargar archivo de Despachos", type=["xlsx", "csv"], key="entregas_foc")
+        file_entregas = st.file_uploader("Cargar archivo de Despachos (Excel/CSV)", type=["xlsx", "csv"], key="entregas")
 
     if file_clientes and file_entregas:
         try:
             df_clientes = cargar_datos(file_clientes)
             df_entregas = cargar_datos(file_entregas)
 
-            # Tratamiento Base Pedidos
             if tratamiento_clientes == "Requiere Tratamiento":
                 if len(df_clientes.columns) == 1:
                     col_name = df_clientes.columns[0]
@@ -243,7 +243,6 @@ with tab_focus:
                 cols_1 = df_clientes.columns.tolist()
                 col_pdv = next((c for c in cols_1 if str(c).upper() == 'PDV'), cols_1[1] if len(cols_1) > 1 else cols_1[0])
 
-            # Identificación Columnas Despachos
             cols_2 = df_entregas.columns.tolist()
             col_cruce_f = next((c for c in cols_2 if 'poc_exter' in str(c).lower()), cols_2[5] if len(cols_2) > 5 else cols_2[0])
             col_datos_d = next((c for c in cols_2 if 'driver' in str(c).lower()), cols_2[3] if len(cols_2) > 3 else cols_2[0])
@@ -264,7 +263,6 @@ with tab_focus:
             df_clientes[col_cruce_1] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_entregas[col_cruce_2] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-            # Cruce Pedidos y Despachos
             df_entregas_subset = df_entregas[[col_cruce_2, col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=[col_cruce_2])
             df_resultado = pd.merge(
                 df_clientes[[col_cruce_1]], 
@@ -274,7 +272,6 @@ with tab_focus:
                 how='left'
             )
 
-            # Inserción de Ventanas
             if st.session_state['df_ventanas'] is not None:
                 df_vh = st.session_state['df_ventanas']
                 df_resultado = pd.merge(df_resultado, df_vh, left_on=col_cruce_1, right_on='PDV_Drive', how='left')
@@ -284,7 +281,6 @@ with tab_focus:
                 df_resultado['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view = 'Ventana_Tratada'
 
-            # Inserción de Ventas
             columnas_ventas_agregadas = []
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve = st.session_state['df_ventas_ext']
@@ -293,7 +289,6 @@ with tab_focus:
                 for c in columnas_ventas_agregadas:
                     df_resultado[c] = df_resultado[c].fillna("-")
             
-            # Limpieza Final
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -369,7 +364,7 @@ with tab_focus:
             st.error(f"Se presentó un error en el procesamiento focus: {e}")
 
 # ==========================================
-# PESTAÑA 3: SINCRONIZACIÓN EXTERNA (DRIVE)
+# PESTAÑA 3: SINCRONIZACIÓN EXTERNA (Google Drive)
 # ==========================================
 with tab_drive:
     st.subheader("Sincronización de Bases de Datos Externas")

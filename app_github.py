@@ -22,6 +22,8 @@ if 'df_ventanas' not in st.session_state:
     st.session_state['df_ventanas'] = None
 if 'df_ventas_ext' not in st.session_state:
     st.session_state['df_ventas_ext'] = None
+if 'df_camiones_mesas' not in st.session_state:
+    st.session_state['df_camiones_mesas'] = None
 if 'reporte_hojas_cargadas' not in st.session_state:
     st.session_state['reporte_hojas_cargadas'] = {}
 if 'autocargado' not in st.session_state:
@@ -67,7 +69,7 @@ def estandarizar_ventana(texto):
 def ejecutar_sincronizacion(silencioso=False):
     bitacora_hojas = {}
     
-    # --- 1. VENTANAS HORARIAS ---
+    # 1. VENTANAS HORARIAS
     try:
         sheet_id_vh = "1OYlT2SVGqxM-C6h27GSrBEcjBOyCixwP"
         url_vh = f"https://docs.google.com/spreadsheets/d/{sheet_id_vh}/export?format=xlsx"
@@ -108,58 +110,81 @@ def ejecutar_sincronizacion(silencioso=False):
     except Exception as e:
         if not silencioso: st.error(f"Error en sincronización de Ventanas: {e}")
 
-    # --- 2. DATOS DE VENTAS ---
+    # 2. DATOS DE VENTAS Y MESAS DE CAMIONES
     try:
         sheet_id_ventas = "1zIllojDvh23QUOP8afJbxD66I5Ly6tgY"
         url_ventas = f"https://docs.google.com/spreadsheets/d/{sheet_id_ventas}/export?format=xlsx"
         xls_ventas = pd.ExcelFile(url_ventas)
         
-        df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
-        bitacora_hojas["Clientes"] = f"{len(df_clientes_ext)} registros"
-        df_clientes_ext = df_clientes_ext.iloc[:, [1, 8]].copy()
-        df_clientes_ext.columns = ['PDV_Drive_Ventas', 'Territorio']
-        df_clientes_ext['PDV_Drive_Ventas'] = df_clientes_ext['PDV_Drive_Ventas'].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df_clientes_ext['Territorio'] = df_clientes_ext['Territorio'].astype(str).str.strip()
-        
-        df_datos_ventas = pd.read_excel(xls_ventas, sheet_name="datos_ventas")
-        bitacora_hojas["datos_ventas"] = f"{len(df_datos_ventas)} registros"
-        nombres_columnas_ventas = df_datos_ventas.columns
-        df_datos_ventas = df_datos_ventas.iloc[:, [0, 1, 2, 3, 4]].copy()
-        df_datos_ventas.columns = ['Territorio', nombres_columnas_ventas[1], nombres_columnas_ventas[2], nombres_columnas_ventas[3], nombres_columnas_ventas[4]]
-        df_datos_ventas['Territorio'] = df_datos_ventas['Territorio'].astype(str).str.strip()
-        
-        df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
-        df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
-        df_ventas_consolidadas = df_ventas_consolidadas.drop(columns=['Territorio'])
-        st.session_state['df_ventas_ext'] = df_ventas_consolidadas
-        
+        # Procesamiento Clientes y Ventas
+        if "Clientes" in xls_ventas.sheet_names and "datos_ventas" in xls_ventas.sheet_names:
+            df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
+            bitacora_hojas["Clientes"] = f"{len(df_clientes_ext)} registros"
+            df_clientes_ext = df_clientes_ext.iloc[:, [1, 8]].copy()
+            df_clientes_ext.columns = ['PDV_Drive_Ventas', 'Territorio']
+            df_clientes_ext['PDV_Drive_Ventas'] = df_clientes_ext['PDV_Drive_Ventas'].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_clientes_ext['Territorio'] = df_clientes_ext['Territorio'].astype(str).str.strip()
+            
+            df_datos_ventas = pd.read_excel(xls_ventas, sheet_name="datos_ventas")
+            bitacora_hojas["datos_ventas"] = f"{len(df_datos_ventas)} registros"
+            nombres_columnas_ventas = df_datos_ventas.columns
+            df_datos_ventas = df_datos_ventas.iloc[:, [0, 1, 2, 3, 4]].copy()
+            df_datos_ventas.columns = ['Territorio', nombres_columnas_ventas[1], nombres_columnas_ventas[2], nombres_columnas_ventas[3], nombres_columnas_ventas[4]]
+            df_datos_ventas['Territorio'] = df_datos_ventas['Territorio'].astype(str).str.strip()
+            
+            df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
+            df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
+            df_ventas_consolidadas = df_ventas_consolidadas.drop(columns=['Territorio'])
+            st.session_state['df_ventas_ext'] = df_ventas_consolidadas
+            
+        # Procesamiento Mesas (estructura_camiones)
+        if "estructura_camiones" in xls_ventas.sheet_names:
+            df_mesas_raw = pd.read_excel(xls_ventas, sheet_name="estructura_camiones")
+            bitacora_hojas["estructura_camiones"] = "Procesada"
+            
+            mesas_map = {
+                0: "Power", 1: "Alfas", 2: "Los Pioneros", 
+                3: "Guerreros", 4: "Turbos", 5: "Gladiadores", 6: "UDC"
+            }
+            camiones_list = []
+            
+            for col_idx in range(min(7, len(df_mesas_raw.columns))):
+                nombre_mesa = mesas_map[col_idx]
+                col_data = df_mesas_raw.iloc[:, col_idx].dropna().astype(str).str.strip().str.upper()
+                for camion_cod in col_data:
+                    if camion_cod and camion_cod != "NAN":
+                        camiones_list.append({"Camion_Ref": camion_cod, "Mesa": nombre_mesa})
+            
+            if camiones_list:
+                df_camiones_mesas = pd.DataFrame(camiones_list).drop_duplicates(subset=["Camion_Ref"])
+                st.session_state['df_camiones_mesas'] = df_camiones_mesas
+
         st.session_state['reporte_hojas_cargadas'] = bitacora_hojas
         if not silencioso: st.success("Bases de datos externas sincronizadas correctamente.")
     except Exception as e:
-        if not silencioso: st.error(f"Error en sincronización de Ventas: {e}")
+        if not silencioso: st.error(f"Error en sincronización de Ventas o Mesas: {e}")
 
 # Ejecución automática al entrar al portal por primera vez
 if not st.session_state['autocargado']:
-    with st.spinner("Inicializando portal y sincronizando bases de datos desde Drive..."):
+    with st.spinner("Inicializando portal y sincronizando bases de datos corporativas..."):
         ejecutar_sincronizacion(silencioso=True)
         st.session_state['autocargado'] = True
 
-# --- DISPOSICIÓN DE LA CABECERA SUPERIOR ---
+# Disposición de la cabecera superior
 col_encabezado, col_control_sync = st.columns([3, 1])
 
 with col_encabezado:
     st.title("Portal de Modulaciones y Seguimiento de Entregas")
-    st.markdown("Herramienta automatizada para el cruce de pedidos, tiempos, ventanas horarias y métricas de venta.")
+    st.markdown("Herramienta automatizada para el cruce de pedidos, tiempos, ventanas horarias, mesas y métricas de venta.")
 
 with col_control_sync:
     st.markdown("<div style='padding-top: 25px;'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Sincronizar Drive Manual", type="primary", use_container_width=True, key="sync_top_button"):
-        with st.spinner("Actualizando datos numéricos..."):
+    if st.button("Sincronizar Drive Manual", type="primary", use_container_width=True, key="sync_top_button"):
+        with st.spinner("Actualizando datos operativos..."):
             ejecutar_sincronizacion(silencioso=False)
 
 st.markdown("---")
 
-# Estructura limpia de pestañas operativas sin la sección de Drive separada
 tab_general, tab_focus = st.tabs(["Modulaciones General", "Modulaciones Focus"])
 
 # ==========================================
@@ -208,6 +233,7 @@ with tab_general:
                 for c in columnas_ventas_agregadas_gen:
                     df_resultado_gen[c] = df_resultado_gen[c].fillna("-")
 
+            # Separación del Camión
             if col_mostrar_d_gen_sel in df_resultado_gen.columns:
                 df_resultado_gen[col_mostrar_d_gen_sel] = df_resultado_gen[col_mostrar_d_gen_sel].fillna("SIN DATOS")
                 split_data_gen = df_resultado_gen[col_mostrar_d_gen_sel].astype(str).str.split('-', expand=True)
@@ -218,13 +244,22 @@ with tab_general:
             else:
                 df_resultado_gen['Camion'] = "NO ENCONTRADO"
 
+            # Cruce de Mesas utilizando el Camión extraído
+            if st.session_state['df_camiones_mesas'] is not None:
+                df_mesas_gen = st.session_state['df_camiones_mesas'].copy()
+                df_resultado_gen = pd.merge(df_resultado_gen, df_mesas_gen, left_on='Camion', right_on='Camion_Ref', how='left')
+                df_resultado_gen['Mesa'] = df_resultado_gen['Mesa'].fillna("SIN MESA")
+            else:
+                df_resultado_gen['Mesa'] = "NO CARGADA"
+
             df_resultado_gen[col_arrived_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_arrived_sel_gen_sel], errors='coerce')
             df_resultado_gen[col_finished_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_finished_sel_gen_sel], errors='coerce')
             df_resultado_gen['Hora_Arribo'] = df_resultado_gen[col_arrived_sel_gen_sel].dt.strftime('%H:%M:%S').fillna("-")
             df_resultado_gen['Tiempo_Entrega_Min'] = (df_resultado_gen[col_finished_sel_gen_sel] - df_resultado_gen[col_arrived_sel_gen_sel]).dt.total_seconds() / 60
             df_resultado_gen['Tiempo_Entrega_Min'] = df_resultado_gen['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-            columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
+            # Estructuración final de columnas
+            columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', 'Mesa', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
             columnas_totales_vista_gen = columnas_base_vista_gen + columnas_ventas_agregadas_gen
             
             vista_final_gen = df_resultado_gen[columnas_totales_vista_gen].rename(columns={
@@ -268,11 +303,10 @@ with tab_general:
                 
             st.dataframe(styled_df_gen, use_container_width=True)
             
-            # --- SECCIÓN: CUMPLIMIENTO VENTANAS HORARIAS (GENERAL) ---
             st.markdown("---")
-            st.markdown("### Cumplimiento ventanas horarias")
+            st.markdown("### Cumplimiento Ventanas Horarias")
             if st.session_state['reporte_hojas_cargadas']:
-                st.info(f"**Estado de bases externas en Drive:** {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
+                st.info(f"Estado de bases externas en Drive: {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
             else:
                 st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la nube.")
             
@@ -389,6 +423,7 @@ with tab_focus:
                 for c in columnas_ventas_agregadas:
                     df_resultado[c] = df_resultado[c].fillna("-")
             
+            # Separación del Camión
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -399,13 +434,22 @@ with tab_focus:
             else:
                 df_resultado['Camion'] = "NO ENCONTRADO"
 
+            # Cruce de Mesas utilizando el Camión extraído
+            if st.session_state['df_camiones_mesas'] is not None:
+                df_mesas_foc = st.session_state['df_camiones_mesas'].copy()
+                df_resultado = pd.merge(df_resultado, df_mesas_foc, left_on='Camion', right_on='Camion_Ref', how='left')
+                df_resultado['Mesa'] = df_resultado['Mesa'].fillna("SIN MESA")
+            else:
+                df_resultado['Mesa'] = "NO CARGADA"
+
             df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
             df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
             df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
             df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
             df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-            columnas_base_vista = [col_cruce_1, 'Camion', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
+            # Estructuración final de columnas
+            columnas_base_vista = [col_cruce_1, 'Camion', 'Mesa', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
             columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
             
             vista_final = df_resultado[columnas_totales_vista].rename(columns={
@@ -449,11 +493,10 @@ with tab_focus:
                 
             st.dataframe(styled_df, use_container_width=True)
             
-            # --- SECCIÓN: CUMPLIMIENTO VENTANAS HORARIAS (FOCUS) ---
             st.markdown("---")
-            st.markdown("### Cumplimiento ventanas horarias")
+            st.markdown("### Cumplimiento Ventanas Horarias")
             if st.session_state['reporte_hojas_cargadas']:
-                st.info(f"**Estado de bases externas en Drive:** {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
+                st.info(f"Estado de bases externas en Drive: {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
             else:
                 st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la nube.")
             

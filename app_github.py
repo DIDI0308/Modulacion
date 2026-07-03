@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import re
+from datetime import datetime
 
 # Configuración de la página con estética corporativa y de lectura limpia
 st.set_page_config(page_title="Portal de Modulaciones", layout="wide")
@@ -57,13 +57,15 @@ def estandarizar_ventana(texto):
     t = t.replace(' AM', '').replace(' PM', '').replace('AM', '').replace('PM', '')
     return t
 
-# Inicialización de variables en caché para bases de Drive
+# Inicialización de variables en caché para las bases externas y estados de carga
 if 'df_ventanas' not in st.session_state:
     st.session_state['df_ventanas'] = None
 if 'df_ventas_ext' not in st.session_state:
     st.session_state['df_ventas_ext'] = None
+if 'reporte_hojas_cargadas' not in st.session_state:
+    st.session_state['reporte_hojas_cargadas'] = {}
 
-# Estructura de pestañas ejecutivas
+# Estructura de pestañas ejecutivas y de estética minimalista
 tab_general, tab_focus, tab_drive = st.tabs(["Modulaciones General", "Modulaciones Focus", "Sincronización Externa"])
 
 # ==========================================
@@ -93,7 +95,6 @@ with tab_general:
                 with c3_g: col_arrived_sel_gen_sel = st.selectbox("Llegada:", cols_2_gen, index=cols_2_gen.index(col_arrived_gen), key="sel_arr_gen")
                 with c4_g: col_finished_sel_gen_sel = st.selectbox("Salida:", cols_2_gen, index=cols_2_gen.index(col_finished_gen), key="sel_fin_gen")
 
-            # Creación de llave interna sin alterar la columna visible original
             df_resultado_gen['_llave_cruce_'] = df_resultado_gen[col_cruce_2_gen_sel].astype(str).str.strip().str.replace('.0', '', regex=False)
 
             if st.session_state['df_ventanas'] is not None:
@@ -172,8 +173,16 @@ with tab_general:
                 styled_df_gen = vista_final_gen.style.applymap(color_status, subset=['Status'])
                 
             st.dataframe(styled_df_gen, use_container_width=True)
-            st.markdown("---")
             
+            # --- NUEVA SECCIÓN: CUMPLIMIENTO VENTANAS HORARIAS (GENERAL) ---
+            st.markdown("---")
+            st.markdown("### Cumplimiento ventanas horarias")
+            if st.session_state['reporte_hojas_cargadas']:
+                st.info(f"**Estado de bases externas en Drive:** {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
+            else:
+                st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la pestaña de Sincronización.")
+            
+            st.markdown("---")
             csv_data_gen = vista_final_gen.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Descargar Reporte General",
@@ -212,7 +221,6 @@ with tab_focus:
             df_clientes_raw = cargar_datos(file_clientes)
             df_entregas_raw = cargar_datos(file_entregas)
 
-            # Proteger bases originales mediante copias de seguridad dedicadas al procesamiento
             df_clientes = df_clientes_raw.copy()
             df_entregas = df_entregas_raw.copy()
 
@@ -259,11 +267,9 @@ with tab_focus:
                 with c4_f: col_arrived_sel = st.selectbox("Llegada:", cols_2, index=cols_2.index(col_arrived), key="sel_foc_4")
                 with c5_f: col_finished_sel = st.selectbox("Salida:", cols_2, index=cols_2.index(col_finished), key="sel_foc_5")
 
-            # SOLUCIÓN DE CRUCE: Indexación en columnas virtuales paralelas para no alterar la estructura ni el contenido original
             df_clientes['_llave_cruce_'] = df_clientes[col_cruce_1].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_entregas['_llave_cruce_'] = df_entregas[col_cruce_2].astype(str).str.strip().str.replace('.0', '', regex=False)
 
-            # Extracción del subconjunto y merge utilizando exclusivamente la llave virtual protegida
             df_entregas_subset = df_entregas[[col_cruce_2, '_llave_cruce_', col_mostrar_d, col_status_i, col_motivo_x, col_arrived_sel, col_finished_sel]].drop_duplicates(subset=['_llave_cruce_'])
             df_resultado = pd.merge(
                 df_clientes[[col_cruce_1, '_llave_cruce_']], 
@@ -272,7 +278,6 @@ with tab_focus:
                 how='left'
             )
 
-            # Inserción de Ventanas desde la llave interna de control
             if st.session_state['df_ventanas'] is not None:
                 df_vh = st.session_state['df_ventanas'].copy()
                 df_resultado = pd.merge(df_resultado, df_vh, left_on='_llave_cruce_', right_on='PDV_Drive', how='left')
@@ -282,7 +287,6 @@ with tab_focus:
                 df_resultado['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view = 'Ventana_Tratada'
 
-            # Inserción de Ventas desde la llave interna de control
             columnas_ventas_agregadas = []
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve = st.session_state['df_ventas_ext'].copy()
@@ -291,7 +295,6 @@ with tab_focus:
                 for c in columnas_ventas_agregadas:
                     df_resultado[c] = df_resultado[c].fillna("-")
             
-            # Procesamiento de Camión sobre la vista combinada
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -351,8 +354,16 @@ with tab_focus:
                 styled_df = vista_final.style.applymap(color_status, subset=['Status'])
                 
             st.dataframe(styled_df, use_container_width=True)
-            st.markdown("---")
             
+            # --- NUEVA SECCIÓN: CUMPLIMIENTO VENTANAS HORARIAS (FOCUS) ---
+            st.markdown("---")
+            st.markdown("### Cumplimiento ventanas horarias")
+            if st.session_state['reporte_hojas_cargadas']:
+                st.info(f"**Estado de bases externas en Drive:** {str(st.session_state['reporte_hojas_cargadas']).replace('{','').replace('}','')}")
+            else:
+                st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la pestaña de Sincronización.")
+            
+            st.markdown("---")
             csv_data = vista_final.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Descargar Reporte Focus",
@@ -375,14 +386,20 @@ with tab_drive:
     
     if st.button("Actualizar Bases desde Drive", type="primary", key="btn_sync_drive"):
         with st.spinner("Leyendo documentos corporativos, esto tomará unos segundos..."):
+            
+            # Inicializar bitácora interna de hojas cargadas
+            bitacora_hojas = {}
+            
             try:
                 sheet_id_vh = "1OYlT2SVGqxM-C6h27GSrBEcjBOyCixwP"
                 url_vh = f"https://docs.google.com/spreadsheets/d/{sheet_id_vh}/export?format=xlsx"
                 xls_vh = pd.ExcelFile(url_vh)
                 df_vh_list = []
                 
+                # Carga secuencial e identificación de volumen por hoja solicitada
                 if "VH FIJAS LPZ" in xls_vh.sheet_names:
                     df_lpz = pd.read_excel(xls_vh, sheet_name="VH FIJAS LPZ")
+                    bitacora_hojas["VH FIJAS LPZ"] = f"{len(df_lpz)} registros"
                     if len(df_lpz.columns) >= 10:
                         df_temp = df_lpz.iloc[:, [1, 9]].copy()
                         df_temp.columns = ['PDV_Drive', 'Ventana_Tratada']
@@ -390,8 +407,18 @@ with tab_drive:
                         
                 if "VHs FIJAS EA" in xls_vh.sheet_names:
                     df_ea = pd.read_excel(xls_vh, sheet_name="VHs FIJAS EA")
+                    bitacora_hojas["VHs FIJAS EA"] = f"{len(df_ea)} registros"
                     if len(df_ea.columns) >= 6:
                         df_temp = df_ea.iloc[:, [0, 5]].copy()
+                        df_temp.columns = ['PDV_Drive', 'Ventana_Tratada']
+                        df_vh_list.append(df_temp)
+                
+                if "VH FIJA VESPERTINAS LPZ" in xls_vh.sheet_names:
+                    df_vesp = pd.read_excel(xls_vh, sheet_name="VH FIJA VESPERTINAS LPZ")
+                    bitacora_hojas["VH FIJA VESPERTINAS LPZ"] = f"{len(df_vesp)} registros"
+                    # Mapeo de control preventivo para hojas adicionales
+                    if len(df_vesp.columns) >= 2:
+                        df_temp = df_vesp.iloc[:, [0, 1]].copy()
                         df_temp.columns = ['PDV_Drive', 'Ventana_Tratada']
                         df_vh_list.append(df_temp)
                         
@@ -402,7 +429,7 @@ with tab_drive:
                     df_consolidado_vh['Ventana_Tratada'] = df_consolidado_vh['Ventana_Tratada'].apply(estandarizar_ventana)
                     df_consolidado_vh = df_consolidado_vh.drop_duplicates(subset=['PDV_Drive'], keep='first')
                     st.session_state['df_ventanas'] = df_consolidado_vh
-                    st.success("Base de Ventanas Horarias actualizada correctamente.")
+                    st.success("Base de Ventanas Horarias consolidada correctamente.")
             except Exception as e:
                 st.error(f"Error en sincronización de Ventanas: {e}")
 
@@ -412,12 +439,14 @@ with tab_drive:
                 xls_ventas = pd.ExcelFile(url_ventas)
                 
                 df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
+                bitacora_hojas["Clientes"] = f"{len(df_clientes_ext)} registros"
                 df_clientes_ext = df_clientes_ext.iloc[:, [1, 8]].copy()
                 df_clientes_ext.columns = ['PDV_Drive_Ventas', 'Territorio']
                 df_clientes_ext['PDV_Drive_Ventas'] = df_clientes_ext['PDV_Drive_Ventas'].astype(str).str.strip().str.replace('.0', '', regex=False)
                 df_clientes_ext['Territorio'] = df_clientes_ext['Territorio'].astype(str).str.strip()
                 
                 df_datos_ventas = pd.read_excel(xls_ventas, sheet_name="datos_ventas")
+                bitacora_hojas["datos_ventas"] = f"{len(df_datos_ventas)} registros"
                 nombres_columnas_ventas = df_datos_ventas.columns
                 df_datos_ventas = df_datos_ventas.iloc[:, [0, 1, 2, 3, 4]].copy()
                 df_datos_ventas.columns = ['Territorio', nombres_columnas_ventas[1], nombres_columnas_ventas[2], nombres_columnas_ventas[3], nombres_columnas_ventas[4]]
@@ -429,5 +458,9 @@ with tab_drive:
                 st.session_state['df_ventas_ext'] = df_ventas_consolidadas
                 
                 st.success("Base de Ventas (Cruces por Territorio) actualizada correctamente.")
+                
+                # Almacenar bitácora de éxito global
+                st.session_state['reporte_hojas_cargadas'] = bitacora_hojas
+                
             except Exception as e:
                 st.error(f"Error en sincronización de Ventas: {e}")

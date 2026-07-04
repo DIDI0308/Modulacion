@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import io
 
 # Configuración de la página con estética corporativa y de lectura limpia
 st.set_page_config(page_title="Portal de Modulaciones", layout="wide")
@@ -17,7 +18,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inicialización de variables en caché
+# Inicialización de variables en caché para las bases externas y estados de carga
 if 'df_ventanas' not in st.session_state:
     st.session_state['df_ventanas'] = None
 if 'df_ventas_ext' not in st.session_state:
@@ -35,17 +36,30 @@ def cargar_datos(file):
     else:
         return pd.read_csv(file, sep=None, engine='python')
 
+# Función de traducción de estados
+def traducir_estado(val):
+    if pd.isna(val): return "SIN REGISTRO"
+    val_str = str(val).upper()
+    if 'CONCLUDED' in val_str:
+        return 'Entregado'
+    elif 'IN_TREATMENT' in val_str or 'RESCHEDULED' in val_str:
+        return 'Rechazo'
+    elif 'NOT_STARTED' in val_str or 'ON_THE_WAY' in val_str:
+        return 'No Iniciado'
+    return val_str
+
+# Función de colores según la imagen solicitada
 def color_status(val):
     if pd.isna(val):
         return ''
     val_str = str(val).upper()
     
-    if 'IN_TREATMENT' in val_str or 'RESCHEDULED' in val_str:
-        return 'background-color: #D32F2F; color: white; font-weight: bold;'
-    elif 'NOT_STARTED' in val_str:
-        return 'background-color: #757575; color: white; font-weight: bold;'
-    elif 'CONCLUDED' in val_str:
-        return 'background-color: #2E7D32; color: white; font-weight: bold;'
+    if 'RECHAZO' in val_str:
+        return 'background-color: #FF0000; color: black;' # Rojo con texto negro
+    elif 'NO INICIADO' in val_str:
+        return 'background-color: #FFFFFF; color: black;' # Blanco con texto negro
+    elif 'ENTREGADO' in val_str:
+        return 'background-color: #A9D08E; color: black;' # Verde claro con texto negro
     return ''
 
 def estandarizar_ventana(texto):
@@ -65,6 +79,7 @@ def estandarizar_ventana(texto):
     t = t.replace(' AM', '').replace(' PM', '').replace('AM', '').replace('PM', '')
     return t
 
+# Función unificada para la extracción de Drive
 def ejecutar_sincronizacion(silencioso=False):
     bitacora_hojas = {}
     
@@ -115,6 +130,7 @@ def ejecutar_sincronizacion(silencioso=False):
         url_ventas = f"https://docs.google.com/spreadsheets/d/{sheet_id_ventas}/export?format=xlsx"
         xls_ventas = pd.ExcelFile(url_ventas)
         
+        # Procesamiento Clientes y Ventas
         if "Clientes" in xls_ventas.sheet_names and "datos_ventas" in xls_ventas.sheet_names:
             df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
             bitacora_hojas["Clientes"] = f"{len(df_clientes_ext)} registros"
@@ -132,9 +148,9 @@ def ejecutar_sincronizacion(silencioso=False):
             
             df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
             df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
-            # Se conserva la columna Territorio para la vista final
             st.session_state['df_ventas_ext'] = df_ventas_consolidadas
             
+        # Procesamiento Mesas (estructura_camiones)
         if "estructura_camiones" in xls_ventas.sheet_names:
             df_mesas_raw = pd.read_excel(xls_ventas, sheet_name="estructura_camiones")
             bitacora_hojas["estructura_camiones"] = "Procesada"
@@ -161,12 +177,13 @@ def ejecutar_sincronizacion(silencioso=False):
     except Exception as e:
         if not silencioso: st.error(f"Error en sincronización de Ventas o Mesas: {e}")
 
-# Ejecución automática al entrar al portal
+# Ejecución automática al entrar al portal por primera vez
 if not st.session_state['autocargado']:
     with st.spinner("Inicializando portal y sincronizando bases de datos corporativas..."):
         ejecutar_sincronizacion(silencioso=True)
         st.session_state['autocargado'] = True
 
+# Disposición de la cabecera superior
 col_encabezado, col_control_sync = st.columns([3, 1])
 
 with col_encabezado:
@@ -212,6 +229,7 @@ with tab_general:
 
             df_resultado_gen['_llave_cruce_'] = df_resultado_gen[col_cruce_2_gen_sel].astype(str).str.strip().str.replace('.0', '', regex=False)
 
+            # Sincronización Ventanas
             if st.session_state['df_ventanas'] is not None:
                 df_vh_gen = st.session_state['df_ventanas'].copy()
                 df_resultado_gen = pd.merge(df_resultado_gen, df_vh_gen, left_on='_llave_cruce_', right_on='PDV_Drive', how='left')
@@ -221,6 +239,7 @@ with tab_general:
                 df_resultado_gen['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view_gen = 'Ventana_Tratada'
 
+            # Sincronización Ventas y Territorio
             columnas_ventas_agregadas_gen = []
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve_gen = st.session_state['df_ventas_ext'].copy()
@@ -232,6 +251,7 @@ with tab_general:
             else:
                 df_resultado_gen['Territorio'] = "NO CARGADO"
 
+            # Separación Camión
             if col_mostrar_d_gen_sel in df_resultado_gen.columns:
                 df_resultado_gen[col_mostrar_d_gen_sel] = df_resultado_gen[col_mostrar_d_gen_sel].fillna("SIN DATOS")
                 split_data_gen = df_resultado_gen[col_mostrar_d_gen_sel].astype(str).str.split('-', expand=True)
@@ -242,6 +262,7 @@ with tab_general:
             else:
                 df_resultado_gen['Camion'] = "NO ENCONTRADO"
 
+            # Cruce Mesas
             if st.session_state['df_camiones_mesas'] is not None:
                 df_mesas_gen = st.session_state['df_camiones_mesas'].copy()
                 df_resultado_gen = pd.merge(df_resultado_gen, df_mesas_gen, left_on='Camion', right_on='Camion_Ref', how='left')
@@ -249,11 +270,15 @@ with tab_general:
             else:
                 df_resultado_gen['Mesa'] = "NO CARGADA"
 
+            # Tiempos
             df_resultado_gen[col_arrived_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_arrived_sel_gen_sel], errors='coerce')
             df_resultado_gen[col_finished_sel_gen_sel] = pd.to_datetime(df_resultado_gen[col_finished_sel_gen_sel], errors='coerce')
             df_resultado_gen['Hora_Arribo'] = df_resultado_gen[col_arrived_sel_gen_sel].dt.strftime('%H:%M:%S').fillna("-")
             df_resultado_gen['Tiempo_Entrega_Min'] = (df_resultado_gen[col_finished_sel_gen_sel] - df_resultado_gen[col_arrived_sel_gen_sel]).dt.total_seconds() / 60
             df_resultado_gen['Tiempo_Entrega_Min'] = df_resultado_gen['Tiempo_Entrega_Min'].round(2).fillna("-")
+
+            # Traducción de Estado
+            df_resultado_gen[col_status_i_gen] = df_resultado_gen[col_status_i_gen].apply(traducir_estado)
 
             columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', 'Mesa', 'Territorio', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
             columnas_totales_vista_gen = columnas_base_vista_gen + columnas_ventas_agregadas_gen
@@ -265,8 +290,7 @@ with tab_general:
                 col_motivo_x_gen: 'Motivo'
             })
             
-            vista_final_gen['Status'] = vista_final_gen['Status'].fillna("SIN REGISTRO")
-            condicion_motivo_gen = vista_final_gen['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
+            condicion_motivo_gen = vista_final_gen['Status'].str.upper() == 'RECHAZO'
             vista_final_gen['Motivo'] = vista_final_gen['Motivo'].where(condicion_motivo_gen, "-").fillna("SIN DETALLE")
 
             st.markdown("### Controles de Búsqueda y Filtrado")
@@ -276,7 +300,7 @@ with tab_general:
             with col_filter_g:
                 status_filter_g = st.radio(
                     "Segmentación de Estado:", 
-                    ["Todos", "CONCLUDED", "IN_TREATMENT / RESCHEDULED", "NOT_STARTED"], 
+                    ["Todos", "Entregado", "Rechazo", "No Iniciado"], 
                     horizontal=True,
                     key="rad_gen"
                 )
@@ -284,12 +308,8 @@ with tab_general:
             if search_pdv_g:
                 vista_final_gen = vista_final_gen[vista_final_gen['PDV'].astype(str).str.contains(search_pdv_g, case=False, na=False)]
                 
-            if status_filter_g == "CONCLUDED":
-                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('CONCLUDED', na=False)]
-            elif status_filter_g == "IN_TREATMENT / RESCHEDULED":
-                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)]
-            elif status_filter_g == "NOT_STARTED":
-                vista_final_gen = vista_final_gen[vista_final_gen['Status'].astype(str).str.upper().str.contains('NOT_STARTED', na=False)]
+            if status_filter_g != "Todos":
+                vista_final_gen = vista_final_gen[vista_final_gen['Status'].str.upper() == status_filter_g.upper()]
 
             st.markdown("### Consolidado General")
             if hasattr(vista_final_gen.style, 'map'):
@@ -314,7 +334,7 @@ with tab_general:
             with col_dl1_gen:
                 csv_data_gen = vista_final_gen.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Descargar Reporte Completo",
+                    label="Descargar Reporte Completo (CSV)",
                     data=csv_data_gen,
                     file_name="reporte_general_completo.csv",
                     mime="text/csv",
@@ -323,14 +343,24 @@ with tab_general:
                 )
                 
             with col_dl2_gen:
-                columnas_simplificadas = ['PDV', 'Camion', 'Mesa', 'Status', 'Ventana_Horaria']
-                vista_simplificada_gen = vista_final_gen[columnas_simplificadas]
-                csv_data_simp_gen = vista_simplificada_gen.to_csv(index=False).encode('utf-8')
+                # Exportación a Excel conservando colores para el formato simplificado
+                columnas_simplificadas_gen = ['PDV', 'Camion', 'Territorio', 'Status']
+                vista_simplificada_gen = vista_final_gen[columnas_simplificadas_gen]
+                
+                if hasattr(vista_simplificada_gen.style, 'map'):
+                    styled_simp_gen = vista_simplificada_gen.style.map(color_status, subset=['Status'])
+                else:
+                    styled_simp_gen = vista_simplificada_gen.style.applymap(color_status, subset=['Status'])
+                
+                buffer_gen = io.BytesIO()
+                with pd.ExcelWriter(buffer_gen, engine='xlsxwriter') as writer:
+                    styled_simp_gen.to_excel(writer, index=False, sheet_name='Reporte General')
+                
                 st.download_button(
-                    label="Descargar Formato Simplificado",
-                    data=csv_data_simp_gen,
-                    file_name="reporte_general_simplificado.csv",
-                    mime="text/csv",
+                    label="Descargar Formato Excel (Con colores)",
+                    data=buffer_gen.getvalue(),
+                    file_name="reporte_general_simplificado.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="btn_dl_gen_simp"
                 )
 
@@ -419,6 +449,7 @@ with tab_focus:
                 how='left'
             )
 
+            # Sincronización Ventanas
             if st.session_state['df_ventanas'] is not None:
                 df_vh = st.session_state['df_ventanas'].copy()
                 df_resultado = pd.merge(df_resultado, df_vh, left_on='_llave_cruce_', right_on='PDV_Drive', how='left')
@@ -428,6 +459,7 @@ with tab_focus:
                 df_resultado['Ventana_Tratada'] = "NO CARGADA"
                 col_ventana_view = 'Ventana_Tratada'
 
+            # Sincronización Ventas y Territorio
             columnas_ventas_agregadas = []
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve = st.session_state['df_ventas_ext'].copy()
@@ -439,6 +471,7 @@ with tab_focus:
             else:
                 df_resultado['Territorio'] = "NO CARGADO"
             
+            # Separación Camión
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -449,6 +482,7 @@ with tab_focus:
             else:
                 df_resultado['Camion'] = "NO ENCONTRADO"
 
+            # Cruce Mesas
             if st.session_state['df_camiones_mesas'] is not None:
                 df_mesas_foc = st.session_state['df_camiones_mesas'].copy()
                 df_resultado = pd.merge(df_resultado, df_mesas_foc, left_on='Camion', right_on='Camion_Ref', how='left')
@@ -456,11 +490,15 @@ with tab_focus:
             else:
                 df_resultado['Mesa'] = "NO CARGADA"
 
+            # Tiempos
             df_resultado[col_arrived_sel] = pd.to_datetime(df_resultado[col_arrived_sel], errors='coerce')
             df_resultado[col_finished_sel] = pd.to_datetime(df_resultado[col_finished_sel], errors='coerce')
             df_resultado['Hora_Arribo'] = df_resultado[col_arrived_sel].dt.strftime('%H:%M:%S').fillna("-")
             df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
             df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
+
+            # Traducción de Estado
+            df_resultado[col_status_i] = df_resultado[col_status_i].apply(traducir_estado)
 
             columnas_base_vista = [col_cruce_1, 'Camion', 'Mesa', 'Territorio', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
             columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
@@ -472,8 +510,7 @@ with tab_focus:
                 col_motivo_x: 'Motivo'
             })
             
-            vista_final['Status'] = vista_final['Status'].fillna("SIN REGISTRO")
-            condicion_motivo = vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)
+            condicion_motivo = vista_final['Status'].str.upper() == 'RECHAZO'
             vista_final['Motivo'] = vista_final['Motivo'].where(condicion_motivo, "-").fillna("SIN DETALLE")
 
             st.markdown("### Controles de Búsqueda y Filtrado")
@@ -483,7 +520,7 @@ with tab_focus:
             with col_filter_f:
                 status_filter = st.radio(
                     "Segmentación de Estado:", 
-                    ["Todos", "CONCLUDED", "IN_TREATMENT / RESCHEDULED", "NOT_STARTED"], 
+                    ["Todos", "Entregado", "Rechazo", "No Iniciado"], 
                     horizontal=True,
                     key="rad_foc"
                 )
@@ -491,12 +528,8 @@ with tab_focus:
             if search_pdv:
                 vista_final = vista_final[vista_final['PDV'].astype(str).str.contains(search_pdv, case=False, na=False)]
                 
-            if status_filter == "CONCLUDED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('CONCLUDED', na=False)]
-            elif status_filter == "IN_TREATMENT / RESCHEDULED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('IN_TREATMENT|RESCHEDULED', na=False, regex=True)]
-            elif status_filter == "NOT_STARTED":
-                vista_final = vista_final[vista_final['Status'].astype(str).str.upper().str.contains('NOT_STARTED', na=False)]
+            if status_filter != "Todos":
+                vista_final = vista_final[vista_final['Status'].str.upper() == status_filter.upper()]
 
             st.markdown("### Consolidado Focus")
             if hasattr(vista_final.style, 'map'):
@@ -521,7 +554,7 @@ with tab_focus:
             with col_dl1_foc:
                 csv_data_foc = vista_final.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Descargar Reporte Completo",
+                    label="Descargar Reporte Completo (CSV)",
                     data=csv_data_foc,
                     file_name="reporte_focus_completo.csv",
                     mime="text/csv",
@@ -530,14 +563,24 @@ with tab_focus:
                 )
                 
             with col_dl2_foc:
-                columnas_simplificadas_foc = ['PDV', 'Camion', 'Mesa', 'Status', 'Ventana_Horaria']
+                # Exportación a Excel conservando colores para el formato simplificado
+                columnas_simplificadas_foc = ['PDV', 'Camion', 'Territorio', 'Status']
                 vista_simplificada_foc = vista_final[columnas_simplificadas_foc]
-                csv_data_simp_foc = vista_simplificada_foc.to_csv(index=False).encode('utf-8')
+                
+                if hasattr(vista_simplificada_foc.style, 'map'):
+                    styled_simp_foc = vista_simplificada_foc.style.map(color_status, subset=['Status'])
+                else:
+                    styled_simp_foc = vista_simplificada_foc.style.applymap(color_status, subset=['Status'])
+                
+                buffer_foc = io.BytesIO()
+                with pd.ExcelWriter(buffer_foc, engine='xlsxwriter') as writer:
+                    styled_simp_foc.to_excel(writer, index=False, sheet_name='Reporte Focus')
+                
                 st.download_button(
-                    label="Descargar Formato Simplificado",
-                    data=csv_data_simp_foc,
-                    file_name="reporte_focus_simplificado.csv",
-                    mime="text/csv",
+                    label="Descargar Formato Excel (Con colores)",
+                    data=buffer_foc.getvalue(),
+                    file_name="reporte_focus_simplificado.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="btn_dl_foc_simp"
                 )
 

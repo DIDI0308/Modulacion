@@ -17,7 +17,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inicialización de variables en caché para las bases externas y estados de carga
+# Inicialización de variables en caché
 if 'df_ventanas' not in st.session_state:
     st.session_state['df_ventanas'] = None
 if 'df_ventas_ext' not in st.session_state:
@@ -65,7 +65,6 @@ def estandarizar_ventana(texto):
     t = t.replace(' AM', '').replace(' PM', '').replace('AM', '').replace('PM', '')
     return t
 
-# Función unificada para la extracción de Drive
 def ejecutar_sincronizacion(silencioso=False):
     bitacora_hojas = {}
     
@@ -116,7 +115,6 @@ def ejecutar_sincronizacion(silencioso=False):
         url_ventas = f"https://docs.google.com/spreadsheets/d/{sheet_id_ventas}/export?format=xlsx"
         xls_ventas = pd.ExcelFile(url_ventas)
         
-        # Procesamiento Clientes y Ventas
         if "Clientes" in xls_ventas.sheet_names and "datos_ventas" in xls_ventas.sheet_names:
             df_clientes_ext = pd.read_excel(xls_ventas, sheet_name="Clientes")
             bitacora_hojas["Clientes"] = f"{len(df_clientes_ext)} registros"
@@ -134,10 +132,9 @@ def ejecutar_sincronizacion(silencioso=False):
             
             df_ventas_consolidadas = pd.merge(df_clientes_ext, df_datos_ventas, on='Territorio', how='left')
             df_ventas_consolidadas = df_ventas_consolidadas.drop_duplicates(subset=['PDV_Drive_Ventas'], keep='first')
-            df_ventas_consolidadas = df_ventas_consolidadas.drop(columns=['Territorio'])
+            # Se conserva la columna Territorio para la vista final
             st.session_state['df_ventas_ext'] = df_ventas_consolidadas
             
-        # Procesamiento Mesas (estructura_camiones)
         if "estructura_camiones" in xls_ventas.sheet_names:
             df_mesas_raw = pd.read_excel(xls_ventas, sheet_name="estructura_camiones")
             bitacora_hojas["estructura_camiones"] = "Procesada"
@@ -164,13 +161,12 @@ def ejecutar_sincronizacion(silencioso=False):
     except Exception as e:
         if not silencioso: st.error(f"Error en sincronización de Ventas o Mesas: {e}")
 
-# Ejecución automática al entrar al portal por primera vez
+# Ejecución automática al entrar al portal
 if not st.session_state['autocargado']:
     with st.spinner("Inicializando portal y sincronizando bases de datos corporativas..."):
         ejecutar_sincronizacion(silencioso=True)
         st.session_state['autocargado'] = True
 
-# Disposición de la cabecera superior
 col_encabezado, col_control_sync = st.columns([3, 1])
 
 with col_encabezado:
@@ -229,11 +225,13 @@ with tab_general:
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve_gen = st.session_state['df_ventas_ext'].copy()
                 df_resultado_gen = pd.merge(df_resultado_gen, df_ve_gen, left_on='_llave_cruce_', right_on='PDV_Drive_Ventas', how='left')
-                columnas_ventas_agregadas_gen = [c for c in df_ve_gen.columns if c != 'PDV_Drive_Ventas']
+                df_resultado_gen['Territorio'] = df_resultado_gen['Territorio'].fillna("SIN TERRITORIO")
+                columnas_ventas_agregadas_gen = [c for c in df_ve_gen.columns if c not in ['PDV_Drive_Ventas', 'Territorio']]
                 for c in columnas_ventas_agregadas_gen:
                     df_resultado_gen[c] = df_resultado_gen[c].fillna("-")
+            else:
+                df_resultado_gen['Territorio'] = "NO CARGADO"
 
-            # Separación del Camión
             if col_mostrar_d_gen_sel in df_resultado_gen.columns:
                 df_resultado_gen[col_mostrar_d_gen_sel] = df_resultado_gen[col_mostrar_d_gen_sel].fillna("SIN DATOS")
                 split_data_gen = df_resultado_gen[col_mostrar_d_gen_sel].astype(str).str.split('-', expand=True)
@@ -244,7 +242,6 @@ with tab_general:
             else:
                 df_resultado_gen['Camion'] = "NO ENCONTRADO"
 
-            # Cruce de Mesas utilizando el Camión extraído
             if st.session_state['df_camiones_mesas'] is not None:
                 df_mesas_gen = st.session_state['df_camiones_mesas'].copy()
                 df_resultado_gen = pd.merge(df_resultado_gen, df_mesas_gen, left_on='Camion', right_on='Camion_Ref', how='left')
@@ -258,8 +255,7 @@ with tab_general:
             df_resultado_gen['Tiempo_Entrega_Min'] = (df_resultado_gen[col_finished_sel_gen_sel] - df_resultado_gen[col_arrived_sel_gen_sel]).dt.total_seconds() / 60
             df_resultado_gen['Tiempo_Entrega_Min'] = df_resultado_gen['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-            # Estructuración final de columnas
-            columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', 'Mesa', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
+            columnas_base_vista_gen = [col_cruce_2_gen_sel, 'Camion', 'Mesa', 'Territorio', col_status_i_gen, col_ventana_view_gen, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x_gen]
             columnas_totales_vista_gen = columnas_base_vista_gen + columnas_ventas_agregadas_gen
             
             vista_final_gen = df_resultado_gen[columnas_totales_vista_gen].rename(columns={
@@ -311,15 +307,32 @@ with tab_general:
                 st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la nube.")
             
             st.markdown("---")
-            csv_data_gen = vista_final_gen.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Descargar Reporte General",
-                data=csv_data_gen,
-                file_name="reporte_modulaciones_general.csv",
-                mime="text/csv",
-                type="primary",
-                key="btn_dl_gen"
-            )
+            st.markdown("### Exportación de Reportes (General)")
+            
+            col_dl1_gen, col_dl2_gen = st.columns(2)
+            
+            with col_dl1_gen:
+                csv_data_gen = vista_final_gen.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Descargar Reporte Completo",
+                    data=csv_data_gen,
+                    file_name="reporte_general_completo.csv",
+                    mime="text/csv",
+                    type="primary",
+                    key="btn_dl_gen_comp"
+                )
+                
+            with col_dl2_gen:
+                columnas_simplificadas = ['PDV', 'Camion', 'Mesa', 'Status', 'Ventana_Horaria']
+                vista_simplificada_gen = vista_final_gen[columnas_simplificadas]
+                csv_data_simp_gen = vista_simplificada_gen.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Descargar Formato Simplificado",
+                    data=csv_data_simp_gen,
+                    file_name="reporte_general_simplificado.csv",
+                    mime="text/csv",
+                    key="btn_dl_gen_simp"
+                )
 
         except Exception as e:
             st.error(f"Se presentó un error en el procesamiento general: {e}")
@@ -419,11 +432,13 @@ with tab_focus:
             if st.session_state['df_ventas_ext'] is not None:
                 df_ve = st.session_state['df_ventas_ext'].copy()
                 df_resultado = pd.merge(df_resultado, df_ve, left_on='_llave_cruce_', right_on='PDV_Drive_Ventas', how='left')
-                columnas_ventas_agregadas = [c for c in df_ve.columns if c != 'PDV_Drive_Ventas']
+                df_resultado['Territorio'] = df_resultado['Territorio'].fillna("SIN TERRITORIO")
+                columnas_ventas_agregadas = [c for c in df_ve.columns if c not in ['PDV_Drive_Ventas', 'Territorio']]
                 for c in columnas_ventas_agregadas:
                     df_resultado[c] = df_resultado[c].fillna("-")
+            else:
+                df_resultado['Territorio'] = "NO CARGADO"
             
-            # Separación del Camión
             if col_mostrar_d in df_resultado.columns:
                 df_resultado[col_mostrar_d] = df_resultado[col_mostrar_d].fillna("SIN DATOS")
                 split_data = df_resultado[col_mostrar_d].astype(str).str.split('-', expand=True)
@@ -434,7 +449,6 @@ with tab_focus:
             else:
                 df_resultado['Camion'] = "NO ENCONTRADO"
 
-            # Cruce de Mesas utilizando el Camión extraído
             if st.session_state['df_camiones_mesas'] is not None:
                 df_mesas_foc = st.session_state['df_camiones_mesas'].copy()
                 df_resultado = pd.merge(df_resultado, df_mesas_foc, left_on='Camion', right_on='Camion_Ref', how='left')
@@ -448,8 +462,7 @@ with tab_focus:
             df_resultado['Tiempo_Entrega_Min'] = (df_resultado[col_finished_sel] - df_resultado[col_arrived_sel]).dt.total_seconds() / 60
             df_resultado['Tiempo_Entrega_Min'] = df_resultado['Tiempo_Entrega_Min'].round(2).fillna("-")
 
-            # Estructuración final de columnas
-            columnas_base_vista = [col_cruce_1, 'Camion', 'Mesa', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
+            columnas_base_vista = [col_cruce_1, 'Camion', 'Mesa', 'Territorio', col_status_i, col_ventana_view, 'Hora_Arribo', 'Tiempo_Entrega_Min', col_motivo_x]
             columnas_totales_vista = columnas_base_vista + columnas_ventas_agregadas
             
             vista_final = df_resultado[columnas_totales_vista].rename(columns={
@@ -501,15 +514,32 @@ with tab_focus:
                 st.warning("Estructura de Ventanas Horarias: NO CARGADA desde la nube.")
             
             st.markdown("---")
-            csv_data = vista_final.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Descargar Reporte Focus",
-                data=csv_data,
-                file_name="reporte_modulaciones_focus.csv",
-                mime="text/csv",
-                type="primary",
-                key="btn_dl_foc"
-            )
+            st.markdown("### Exportación de Reportes (Focus)")
+            
+            col_dl1_foc, col_dl2_foc = st.columns(2)
+            
+            with col_dl1_foc:
+                csv_data_foc = vista_final.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Descargar Reporte Completo",
+                    data=csv_data_foc,
+                    file_name="reporte_focus_completo.csv",
+                    mime="text/csv",
+                    type="primary",
+                    key="btn_dl_foc_comp"
+                )
+                
+            with col_dl2_foc:
+                columnas_simplificadas_foc = ['PDV', 'Camion', 'Mesa', 'Status', 'Ventana_Horaria']
+                vista_simplificada_foc = vista_final[columnas_simplificadas_foc]
+                csv_data_simp_foc = vista_simplificada_foc.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Descargar Formato Simplificado",
+                    data=csv_data_simp_foc,
+                    file_name="reporte_focus_simplificado.csv",
+                    mime="text/csv",
+                    key="btn_dl_foc_simp"
+                )
 
         except Exception as e:
             st.error(f"Se presentó un error en el procesamiento focus: {e}")

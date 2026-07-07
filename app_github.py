@@ -18,6 +18,14 @@ st.markdown("""
         border-radius: 6px;
         border: 1px solid #ced4da;
     }
+    /* Estilos extra para los KPIs */
+    div[data-testid="metric-container"] {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -87,6 +95,75 @@ def estandarizar_ventana(texto):
             
     t = t.replace(' AM', '').replace(' PM', '').replace('AM', '').replace('PM', '')
     return t
+
+# -------------------------------------------------------------
+# NUEVAS FUNCIONES PARA INDICADORES (KPIs)
+# -------------------------------------------------------------
+def evaluar_otd(arribo_str, ventana_str):
+    """Evalúa si la hora de arribo está dentro de la ventana horaria asignada."""
+    if pd.isna(arribo_str) or pd.isna(ventana_str) or arribo_str == "-" or "SIN" in str(ventana_str).upper() or "NO" in str(ventana_str).upper():
+        return None
+    try:
+        arr_time = datetime.strptime(str(arribo_str).strip(), '%H:%M:%S').time()
+        partes = str(ventana_str).split('-')
+        if len(partes) == 2:
+            inicio_str = partes[0].strip()
+            fin_str = partes[1].strip()
+            
+            inicio = datetime.strptime(inicio_str, '%H:%M').time() if len(inicio_str.split(':')) == 2 else datetime.strptime(inicio_str, '%H:%M:%S').time()
+            
+            if fin_str == "23:59":
+                fin = datetime.strptime("23:59:59", '%H:%M:%S').time()
+            elif len(fin_str.split(':')) == 2:
+                fin = datetime.strptime(fin_str, '%H:%M').time()
+            else:
+                fin = datetime.strptime(fin_str, '%H:%M:%S').time()
+                
+            return inicio <= arr_time <= fin
+    except:
+        pass
+    return None
+
+def mostrar_kpis(df):
+    """Calcula y renderiza las tarjetas de Resumen Ejecutivo."""
+    st.markdown("#### Resumen Ejecutivo (KPIs)")
+    total_pdvs = len(df)
+    if total_pdvs == 0:
+        st.info("No hay datos para calcular métricas con los filtros actuales.")
+        st.markdown("---")
+        return
+
+    # 1. Efectividad (Strike Rate)
+    entregados = (df['Motivo'].str.upper() == 'ENTREGADO').sum()
+    efectividad = (entregados / total_pdvs) * 100
+
+    # 2. Volumen Rechazado (HL)
+    hl_rechazados = 0
+    if 'HL' in df.columns:
+        df_rechazos = df[df['Motivo'].str.upper() == 'RECHAZO']
+        hl_rechazados = pd.to_numeric(df_rechazos['HL'], errors='coerce').sum()
+
+    # 3. Drop Time
+    tiempos = pd.to_numeric(df['Tiempo_Entrega_Min'], errors='coerce')
+    tiempos_validos = tiempos[tiempos > 0]
+    drop_time = tiempos_validos.mean() if not tiempos_validos.empty else 0
+
+    # 4. Cumplimiento Ventana (OTD)
+    otd_results = df.apply(lambda x: evaluar_otd(x.get('Hora_Arribo'), x.get('Ventana_Horaria')), axis=1)
+    valid_otd = otd_results.dropna()
+    otd_pct = (valid_otd.sum() / len(valid_otd)) * 100 if not valid_otd.empty else 0
+    base_otd = len(valid_otd)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Efectividad (Strike Rate)", f"{efectividad:.1f}%", f"{entregados} de {total_pdvs} PDVs")
+    col2.metric("Volumen Rechazado", f"{hl_rechazados:.2f} HL", "Merma Operativa", delta_color="inverse")
+    col3.metric("Drop Time Promedio", f"{drop_time:.1f} min", "Tiempo en PDV")
+    
+    otd_label = f"{otd_pct:.1f}%" if base_otd > 0 else "N/A"
+    col4.metric("Cumplimiento (OTD)", otd_label, f"Base: {base_otd} ventanas válidas")
+    st.markdown("---")
+
+# -------------------------------------------------------------
 
 def generar_excel_colores(df_simp):
     wb = Workbook()
@@ -375,6 +452,9 @@ with tab_general:
                 columnas_simplificadas_gen = ['PDV', 'Camion', 'Territorio', 'Motivo']
                 tabla_a_mostrar_gen = vista_final_gen[columnas_simplificadas_gen] if opcion_tabla_gen == "Formato Simplificado (4 Columnas)" else vista_final_gen
 
+                # MOSTRAR KPIs GENERAL
+                mostrar_kpis(vista_final_gen)
+
                 st.markdown("### Consolidado General")
                 if hasattr(tabla_a_mostrar_gen.style, 'map'):
                     styled_df_gen = tabla_a_mostrar_gen.style.map(color_status, subset=['Motivo'])
@@ -595,6 +675,9 @@ with tab_focus:
 
                 columnas_simplificadas_foc = ['PDV', 'Camion', 'Territorio', 'Motivo']
                 tabla_a_mostrar_foc = vista_final[columnas_simplificadas_foc] if opcion_tabla_foc == "Formato Simplificado (4 Columnas)" else vista_final
+
+                # MOSTRAR KPIs FOCUS
+                mostrar_kpis(vista_final)
 
                 st.markdown("### Consolidado Focus")
                 if hasattr(tabla_a_mostrar_foc.style, 'map'):
